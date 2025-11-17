@@ -1,0 +1,14 @@
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+#Claude files
+Claude.md
+claude/
