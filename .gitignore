@@ -12,3 +12,6 @@ Thumbs.db
 #Claude files
 Claude.md
 .claude/
+
+# .zip
+*.zip
