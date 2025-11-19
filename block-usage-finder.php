@@ -80,6 +80,7 @@ function buf_deactivate() {
     global $wpdb;
     $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_buf_rate_limit_%' OR option_name LIKE '_transient_timeout_buf_rate_limit_%'" );
     $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_buf_has_block_%' OR option_name LIKE '_transient_timeout_buf_has_block_%'" );
+    $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_buf_has_pattern_%' OR option_name LIKE '_transient_timeout_buf_has_pattern_%'" );
 }
 
 /**
@@ -244,6 +245,113 @@ function buf_check_rate_limit() {
 }
 
 /**
+ * Get all synced patterns (reusable blocks).
+ */
+function buf_get_synced_patterns() {
+    $patterns = get_posts([
+        'post_type'      => 'wp_block',
+        'posts_per_page' => -1,
+        'post_status'    => 'publish',
+        'orderby'        => 'title',
+        'order'          => 'ASC',
+        'meta_query'     => [
+            'relation' => 'OR',
+            [
+                'key'     => 'wp_pattern_sync_status',
+                'compare' => 'NOT EXISTS',
+            ],
+            [
+                'key'     => 'wp_pattern_sync_status',
+                'value'   => 'unsynced',
+                'compare' => '!=',
+            ],
+        ],
+    ]);
+
+    return $patterns;
+}
+
+/**
+ * Returns an array of WP_Post objects that contain the specified synced pattern.
+ */
+function buf_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
+    // Set execution time limit for this operation
+    $original_time_limit = ini_get( 'max_execution_time' );
+    if ( function_exists( 'set_time_limit' ) ) {
+        @set_time_limit( 30 ); // Max 30 seconds
+    }
+
+    $limit = absint( apply_filters( 'buf_query_limit', 500 ) );
+    $limit = min( $limit, 1000 ); // Hard cap at 1000
+
+    // Default to all public post types if none specified
+    if ( empty( $post_types ) ) {
+        $post_types = [ 'post', 'page' ];
+    } else {
+        // Sanitize post types
+        $post_types = array_map( 'sanitize_key', (array) $post_types );
+    }
+
+    $pattern_id = absint( $pattern_id );
+
+    // Query for IDs only - much more memory efficient
+    $ids = get_posts([
+        'post_type'              => $post_types,
+        'posts_per_page'         => $batch_size,
+        'offset'                 => $batch_offset,
+        'post_status'            => 'any',
+        'fields'                 => 'ids',
+        'no_found_rows'          => true,  // Performance optimization
+        'update_post_meta_cache' => false, // Performance optimization
+        'update_post_term_cache' => false, // Performance optimization
+        'orderby'                => 'ID',
+        'order'                  => 'ASC',
+    ]);
+
+    $matches = [];
+    $start_time = microtime( true );
+
+    // Build regex pattern to find wp:block with ref attribute
+    $ref_pattern = '/<!--\s+wp:block\s+\{[^}]*"ref"\s*:\s*' . $pattern_id . '[^}]*\}\s+-->/';
+
+    foreach ( $ids as $post_id ) {
+        // Timeout protection
+        if ( microtime( true ) - $start_time > 25 ) { // 25 second safeguard
+            buf_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
+            break;
+        }
+
+        $post_id = absint( $post_id ); // Extra validation
+
+        // Use object cache for pattern detection with 5-minute TTL
+        $cache_key = 'buf_has_pattern_' . md5( $pattern_id . '_' . $post_id );
+        $has_pattern_cached = wp_cache_get( $cache_key, 'block-usage-finder' );
+
+        if ( false === $has_pattern_cached ) {
+            $post = get_post( $post_id );
+            // Check if post content contains the pattern reference
+            $has_pattern_cached = preg_match( $ref_pattern, $post->post_content ) ? 'yes' : 'no';
+            wp_cache_set( $cache_key, $has_pattern_cached, 'block-usage-finder', 300 ); // 5-minute cache
+        }
+
+        if ( 'yes' === $has_pattern_cached ) {
+            $matches[] = get_post( $post_id );
+        }
+    }
+
+    // Restore original time limit
+    if ( function_exists( 'set_time_limit' ) ) {
+        @set_time_limit( $original_time_limit );
+    }
+
+    return [
+        'posts' => $matches,
+        'has_more' => count( $ids ) === $batch_size,
+        'next_offset' => $batch_offset + $batch_size,
+    ];
+}
+
+/**
  * Returns an array of WP_Post objects that contain the specified block.
  */
 function buf_get_posts_using_block( $block_name, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
@@ -319,18 +427,17 @@ function buf_get_posts_using_block( $block_name, $post_types = [], $batch_offset
 }
 
 /**
- * Add admin menu page under "Block Usage".
+ * Add admin menu page under "Tools".
  */
 add_action( 'admin_menu', 'buf_add_menu' );
 function buf_add_menu() {
-    add_menu_page(
+    add_submenu_page(
+        'tools.php',
         __( 'Block Usage Finder', 'block-usage-finder' ),
-        __( 'Block Usage', 'block-usage-finder' ),
+        __( 'Block Usage Finder', 'block-usage-finder' ),
         'use_block_usage_finder',
         'block-usage-finder',
-        'buf_render_admin_page',
-        'dashicons-search',
-        30
+        'buf_render_admin_page'
     );
 }
 
@@ -358,6 +465,14 @@ function buf_set_security_headers() {
 function buf_render_admin_page() {
     // Get all public post types
     $post_types = get_post_types( [ 'public' => true ], 'objects' );
+
+    // Get all registered blocks
+    $block_registry = WP_Block_Type_Registry::get_instance();
+    $all_blocks = $block_registry->get_all_registered();
+    ksort( $all_blocks ); // Sort alphabetically
+
+    // Get all synced patterns
+    $synced_patterns = buf_get_synced_patterns();
     ?>
     <div class="wrap">
         <h1><?php esc_html_e( 'Block Usage Finder', 'block-usage-finder' ); ?></h1>
@@ -365,6 +480,23 @@ function buf_render_admin_page() {
             <div class="buf-search-field">
                 <label for="buf-block-name"><?php esc_html_e( 'Block Name:', 'block-usage-finder' ); ?></label>
                 <input type="text" id="buf-block-name" class="buf-search-input" placeholder="<?php esc_attr_e( 'e.g. core/paragraph', 'block-usage-finder' ); ?>">
+            </div>
+            <div class="buf-search-field">
+                <label for="buf-block-dropdown"><?php esc_html_e( 'Or select from available blocks:', 'block-usage-finder' ); ?></label>
+                <select id="buf-block-dropdown" class="buf-block-dropdown">
+                    <option value=""><?php esc_html_e( '-- Select a block --', 'block-usage-finder' ); ?></option>
+                    <?php foreach ( $all_blocks as $block_name => $block_type ) : ?>
+                        <option value="<?php echo esc_attr( $block_name ); ?>">
+                            <?php
+                            // Show block title if available, otherwise use block name
+                            echo esc_html( isset( $block_type->title ) && ! empty( $block_type->title )
+                                ? $block_type->title . ' (' . $block_name . ')'
+                                : $block_name
+                            );
+                            ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="buf-search-field">
                 <label for="buf-post-types"><?php esc_html_e( 'Post Types:', 'block-usage-finder' ); ?></label>
@@ -382,6 +514,46 @@ function buf_render_admin_page() {
                 <button id="buf-export-button" class="button" style="display:none;"><?php esc_html_e( 'Export CSV', 'block-usage-finder' ); ?></button>
             </div>
         </div>
+        <hr style="margin: 30px 0;">
+        <h2><?php esc_html_e( 'Search for Synced Pattern Usage', 'block-usage-finder' ); ?></h2>
+        <div role="search" aria-label="<?php esc_attr_e( 'Search for synced pattern usage', 'block-usage-finder' ); ?>">
+            <div class="buf-search-field">
+                <label for="buf-pattern-dropdown"><?php esc_html_e( 'Select a synced pattern:', 'block-usage-finder' ); ?></label>
+                <select id="buf-pattern-dropdown" class="buf-pattern-dropdown">
+                    <option value=""><?php esc_html_e( '-- Select a synced pattern --', 'block-usage-finder' ); ?></option>
+                    <?php foreach ( $synced_patterns as $pattern ) : ?>
+                        <option value="<?php echo esc_attr( $pattern->ID ); ?>">
+                            <?php echo esc_html( $pattern->post_title ? $pattern->post_title : __( '(no title)', 'block-usage-finder' ) ); ?>
+                        </option>
+                    <?php endforeach; ?>
+                    <?php if ( empty( $synced_patterns ) ) : ?>
+                        <option value="" disabled><?php esc_html_e( 'No synced patterns found', 'block-usage-finder' ); ?></option>
+                    <?php endif; ?>
+                </select>
+            </div>
+            <div class="buf-search-field">
+                <label for="buf-pattern-post-types"><?php esc_html_e( 'Post Types:', 'block-usage-finder' ); ?></label>
+                <select id="buf-pattern-post-types" class="buf-post-types-select" multiple size="4">
+                    <?php foreach ( $post_types as $post_type ) : ?>
+                        <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
+                            <?php echo esc_html( $post_type->label ); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'block-usage-finder' ); ?></small>
+            </div>
+            <div class="buf-search-actions">
+                <button id="buf-pattern-search-button" class="button button-primary"><?php esc_html_e( 'Search Pattern', 'block-usage-finder' ); ?></button>
+                <button id="buf-pattern-export-button" class="button" style="display:none;"><?php esc_html_e( 'Export CSV', 'block-usage-finder' ); ?></button>
+            </div>
+        </div>
+        <div id="buf-pattern-search-results"
+             class="buf-results-container"
+             role="region"
+             aria-live="polite"
+             aria-atomic="true"
+             aria-label="<?php esc_attr_e( 'Pattern Search Results', 'block-usage-finder' ); ?>">
+        </div>
         <div id="buf-search-results"
              class="buf-results-container"
              role="region"
@@ -394,7 +566,9 @@ function buf_render_admin_page() {
         .buf-search-field {
             margin-bottom: 15px;
         }
-        .buf-search-input {
+        .buf-search-input,
+        .buf-block-dropdown,
+        .buf-pattern-dropdown {
             max-width: 300px;
             width: 100%;
         }
@@ -409,9 +583,13 @@ function buf_render_admin_page() {
             margin-top: 20px;
         }
         .buf-search-input:focus,
+        .buf-block-dropdown:focus,
+        .buf-pattern-dropdown:focus,
         .buf-post-types-select:focus,
         #buf-search-button:focus,
-        #buf-export-button:focus {
+        #buf-export-button:focus,
+        #buf-pattern-search-button:focus,
+        #buf-pattern-export-button:focus {
             outline: 2px solid #0073aa;
             outline-offset: 2px;
         }
@@ -446,7 +624,17 @@ function buf_render_admin_page() {
             var timer;
             var currentNonce = '<?php echo wp_create_nonce( 'buf_search_nonce' ); ?>';
             var allResults = [];
+            var allPatternResults = [];
             var currentSearch = null;
+            var currentPatternSearch = null;
+
+            // Handle block dropdown selection
+            $('#buf-block-dropdown').on('change', function() {
+                var selectedBlock = $(this).val();
+                if (selectedBlock) {
+                    $('#buf-block-name').val(selectedBlock);
+                }
+            });
 
             // Refresh nonce every 5 minutes (more frequent for long operations)
             setInterval(function() {
@@ -583,7 +771,7 @@ function buf_render_admin_page() {
                 allResults = [];
                 $('#buf-export-button').hide();
                 $('#buf-search-button').prop('disabled', true).attr('aria-busy', 'true');
-                $('#buf-search-results').html('<p><?php echo esc_js( __( 'Searching...', 'block-usage-finder' ) ); ?></p>');
+                updateProgress(0, 0);
 
                 ensureFreshNonce(function() {
                     searchBlockBatch(block, getSelectedPostTypes(), 0, []);
@@ -627,6 +815,144 @@ function buf_render_admin_page() {
                 timer = setTimeout(function(){
                     searchBlock( $('#buf-block-name').val() );
                 }, 500);
+            });
+
+            // ========== PATTERN SEARCH FUNCTIONS ==========
+
+            function getSelectedPatternPostTypes() {
+                var selected = $('#buf-pattern-post-types').val();
+                return selected && selected.length ? selected : ['post', 'page'];
+            }
+
+            function searchPatternBatch(patternId, postTypes, offset, accumulated) {
+                offset = offset || 0;
+                accumulated = accumulated || [];
+
+                $.post(ajaxurl, {
+                    action:      'buf_search_pattern',
+                    pattern_id:  patternId,
+                    post_types:  postTypes,
+                    batch_offset: offset,
+                    _ajax_nonce: currentNonce
+                }, function(response){
+                    if (!response || typeof response !== 'object') {
+                        displayPatternError('<?php echo esc_js( __( 'Invalid response format', 'block-usage-finder' ) ); ?>');
+                        return;
+                    }
+
+                    if (!response.success) {
+                        var errorMsg = response.data ? escapeHtml(String(response.data)) : '<?php echo esc_js( __( 'Unknown error', 'block-usage-finder' ) ); ?>';
+                        displayPatternError(errorMsg);
+                        return;
+                    }
+
+                    var data = response.data;
+                    if (!data || !Array.isArray(data.results)) {
+                        displayPatternError('<?php echo esc_js( __( 'Invalid response format', 'block-usage-finder' ) ); ?>');
+                        return;
+                    }
+
+                    accumulated = accumulated.concat(data.results);
+                    allPatternResults = accumulated;
+
+                    // Update progress
+                    var progress = data.progress || 100;
+                    updatePatternProgress(progress, accumulated.length);
+
+                    // Display current results
+                    displayPatternResults(accumulated, !data.has_more);
+
+                    // Continue batching if more results
+                    if (data.has_more && currentPatternSearch === patternId) {
+                        searchPatternBatch(patternId, postTypes, data.next_offset, accumulated);
+                    } else {
+                        $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+                        if (accumulated.length > 0) {
+                            $('#buf-pattern-export-button').show();
+                        }
+                    }
+                }).fail(function() {
+                    displayPatternError('<?php echo esc_js( __( 'Network error. Please try again.', 'block-usage-finder' ) ); ?>');
+                });
+            }
+
+            function updatePatternProgress(percent, count) {
+                var html = '<div class="buf-progress-bar" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100">';
+                html += '<div class="buf-progress-fill" style="width: ' + percent + '%"></div>';
+                html += '</div>';
+                html += '<p><?php echo esc_js( __( 'Searching...', 'block-usage-finder' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'block-usage-finder' ) ); ?></p>';
+                $('#buf-pattern-search-results').html(html);
+            }
+
+            function displayPatternResults(data, isComplete) {
+                var html = '';
+                if (data.length) {
+                    html += '<p class="buf-results-count" aria-live="polite">';
+                    html += data.length + ' ' + (data.length === 1 ? '<?php echo esc_js( __( 'result', 'block-usage-finder' ) ); ?>' : '<?php echo esc_js( __( 'results', 'block-usage-finder' ) ); ?>');
+                    if (!isComplete) {
+                        html += ' <?php echo esc_js( __( 'found so far...', 'block-usage-finder' ) ); ?>';
+                    } else {
+                        html += ' <?php echo esc_js( __( 'found', 'block-usage-finder' ) ); ?>';
+                    }
+                    html += '</p>';
+                    html += '<ul>';
+                    data.forEach(function(item){
+                        if (item && item.edit_link && item.title && item.type) {
+                            html += '<li><a href="'+ escapeHtml(item.edit_link) +'" aria-label="<?php echo esc_js( __( 'Edit', 'block-usage-finder' ) ); ?> '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'">'+ escapeHtml(item.title) +'</a> <span class="post-type-label">('+ escapeHtml(item.type) +')</span></li>';
+                        }
+                    });
+                    html += '</ul>';
+                } else if (isComplete) {
+                    html = '<p><?php echo esc_js( __( 'No content found using that synced pattern.', 'block-usage-finder' ) ); ?></p>';
+                }
+                $('#buf-pattern-search-results').html(html).attr('tabindex', '-1').focus();
+            }
+
+            function displayPatternError(message) {
+                var html = '<div role="alert" class="notice notice-error"><p><strong><?php echo esc_js( __( 'Error:', 'block-usage-finder' ) ); ?></strong> '+ message +'</p></div>';
+                $('#buf-pattern-search-results').html(html);
+                $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            }
+
+            function searchPattern(patternId) {
+                if (!patternId) {
+                    displayPatternError('<?php echo esc_js( __( 'Please select a synced pattern', 'block-usage-finder' ) ); ?>');
+                    return;
+                }
+
+                currentPatternSearch = patternId;
+                allPatternResults = [];
+                $('#buf-pattern-export-button').hide();
+                $('#buf-pattern-search-button').prop('disabled', true).attr('aria-busy', 'true');
+                updatePatternProgress(0, 0);
+
+                ensureFreshNonce(function() {
+                    searchPatternBatch(patternId, getSelectedPatternPostTypes(), 0, []);
+                });
+            }
+
+            // Pattern search button handler
+            $('#buf-pattern-search-button').on('click', function(){
+                searchPattern( $('#buf-pattern-dropdown').val() );
+            });
+
+            // Pattern CSV Export
+            $('#buf-pattern-export-button').on('click', function(){
+                var csv = 'Title,Type,Edit Link\n';
+                allPatternResults.forEach(function(item){
+                    csv += '"' + String(item.title).replace(/"/g, '""') + '",';
+                    csv += '"' + String(item.type).replace(/"/g, '""') + '",';
+                    csv += '"' + String(item.edit_link).replace(/"/g, '""') + '"\n';
+                });
+
+                var blob = new Blob([csv], { type: 'text/csv' });
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                var patternName = $('#buf-pattern-dropdown option:selected').text().replace(/[^a-z0-9]/gi, '-');
+                a.download = 'pattern-usage-' + patternName + '.csv';
+                a.click();
+                window.URL.revokeObjectURL(url);
             });
         });
     })(jQuery);
@@ -763,6 +1089,96 @@ function buf_ajax_search_block() {
             'rate_limit'    => __( 'Too many requests. Please wait.', 'block-usage-finder' ),
             'empty_input'   => __( 'Block name is required', 'block-usage-finder' ),
             'invalid_input' => __( 'Invalid block name format. Use: namespace/block-name', 'block-usage-finder' ),
+        ];
+
+        $message = isset( $error_messages[ $e->getMessage() ] ) ? $error_messages[ $e->getMessage() ] : __( 'An error occurred', 'block-usage-finder' );
+        wp_send_json_error( $message );
+    }
+}
+
+/**
+ * AJAX handler for searching synced pattern usage.
+ */
+add_action( 'wp_ajax_buf_search_pattern', 'buf_ajax_search_pattern' );
+function buf_ajax_search_pattern() {
+    // Set custom error handler to log PHP errors
+    set_error_handler( function( $errno, $errstr, $errfile, $errline ) {
+        buf_log_security_event( 'php_error', [
+            'error' => $errstr,
+            'errno' => $errno,
+            'file' => $errfile,
+            'line' => $errline
+        ] );
+        return true; // Suppress error output
+    });
+
+    try {
+        check_ajax_referer( 'buf_search_nonce' );
+
+        if ( ! current_user_can( 'use_block_usage_finder' ) ) {
+            buf_log_security_event( 'unauthorized_access', [ 'capability' => 'use_block_usage_finder' ] );
+            throw new Exception( 'unauthorized' );
+        }
+
+        // Rate limiting with IP tracking
+        $rate_check = buf_check_rate_limit();
+        if ( is_wp_error( $rate_check ) ) {
+            throw new Exception( 'rate_limit' );
+        }
+
+        // Proper input handling with wp_unslash()
+        $pattern_id = isset( $_POST['pattern_id'] ) ? absint( $_POST['pattern_id'] ) : 0;
+        $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
+        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
+
+        if ( empty( $pattern_id ) ) {
+            throw new Exception( 'empty_input' );
+        }
+
+        // Verify the pattern exists and is a wp_block post type
+        $pattern = get_post( $pattern_id );
+        if ( ! $pattern || $pattern->post_type !== 'wp_block' ) {
+            buf_log_security_event( 'invalid_pattern', [ 'pattern_id' => $pattern_id ] );
+            throw new Exception( 'invalid_pattern' );
+        }
+
+        $search_result = buf_get_posts_using_pattern( $pattern_id, $post_types, $batch_offset, 100 );
+        $results = [];
+
+        foreach ( $search_result['posts'] as $post ) {
+            $results[] = [
+                'id'        => absint( $post->ID ),
+                'title'     => get_the_title( $post ),
+                'edit_link' => esc_url( get_edit_post_link( $post ) ),
+                'type'      => sanitize_key( $post->post_type ),
+            ];
+        }
+
+        // Calculate progress percentage
+        $progress = 100;
+        if ( $search_result['has_more'] ) {
+            // Estimate based on batch size
+            $total_estimate = $batch_offset + 200; // Conservative estimate
+            $progress = min( 95, ( $batch_offset / $total_estimate ) * 100 );
+        }
+
+        restore_error_handler();
+        wp_send_json_success( [
+            'results' => $results,
+            'has_more' => $search_result['has_more'],
+            'next_offset' => $search_result['next_offset'],
+            'progress' => $progress,
+        ] );
+
+    } catch ( Exception $e ) {
+        restore_error_handler();
+
+        // Generic error messages to prevent information disclosure
+        $error_messages = [
+            'unauthorized'    => __( 'Access denied', 'block-usage-finder' ),
+            'rate_limit'      => __( 'Too many requests. Please wait.', 'block-usage-finder' ),
+            'empty_input'     => __( 'Pattern ID is required', 'block-usage-finder' ),
+            'invalid_pattern' => __( 'Invalid pattern ID', 'block-usage-finder' ),
         ];
 
         $message = isset( $error_messages[ $e->getMessage() ] ) ? $error_messages[ $e->getMessage() ] : __( 'An error occurred', 'block-usage-finder' );
