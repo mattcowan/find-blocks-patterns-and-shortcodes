@@ -1,14 +1,10 @@
 # Block Usage Finder
 
-🔒 **Security Score: 10/10** | ♿ **WCAG 2.1 AA Compliant**
-
 A WordPress plugin that helps administrators find which posts and pages use specific Gutenberg blocks.
 
 ## Description
 
 Block Usage Finder adds an admin interface for searching posts and pages containing specific Gutenberg blocks. Enter a block name and get instant results showing where that block is used.
-
-**Version 1.1.0** features enterprise-grade security hardening and full accessibility compliance.
 
 ## Features
 
@@ -97,10 +93,6 @@ add_action('buf_security_event', function($log) {
 
 ## Security
 
-This plugin has achieved a **10/10 security score** with:
-- Zero known vulnerabilities
-- Enterprise-grade security measures
-- Full security audit trail
 - Rate limiting and abuse prevention
 - Input validation and output sanitization
 - Information disclosure prevention
@@ -134,7 +126,3 @@ GPL v2 or later - [https://www.gnu.org/licenses/gpl-2.0.html](https://www.gnu.or
 ## Author
 
 **Matthew Cowan**
-
----
-
-**Security Hardened v1.1.0** | WordPress Plugin | 484 lines of secure code
