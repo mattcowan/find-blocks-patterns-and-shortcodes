@@ -511,6 +511,7 @@ function buf_render_admin_page() {
             </div>
             <div class="buf-search-actions">
                 <button id="buf-search-button" class="button button-primary"><?php esc_html_e( 'Search', 'block-usage-finder' ); ?></button>
+                <button id="buf-cancel-button" class="button" style="display:none;"><?php esc_html_e( 'Cancel', 'block-usage-finder' ); ?></button>
                 <button id="buf-export-button" class="button" style="display:none;"><?php esc_html_e( 'Export CSV', 'block-usage-finder' ); ?></button>
             </div>
         </div>
@@ -544,6 +545,7 @@ function buf_render_admin_page() {
             </div>
             <div class="buf-search-actions">
                 <button id="buf-pattern-search-button" class="button button-primary"><?php esc_html_e( 'Search Pattern', 'block-usage-finder' ); ?></button>
+                <button id="buf-pattern-cancel-button" class="button" style="display:none;"><?php esc_html_e( 'Cancel', 'block-usage-finder' ); ?></button>
                 <button id="buf-pattern-export-button" class="button" style="display:none;"><?php esc_html_e( 'Export CSV', 'block-usage-finder' ); ?></button>
             </div>
         </div>
@@ -587,8 +589,10 @@ function buf_render_admin_page() {
         .buf-pattern-dropdown:focus,
         .buf-post-types-select:focus,
         #buf-search-button:focus,
+        #buf-cancel-button:focus,
         #buf-export-button:focus,
         #buf-pattern-search-button:focus,
+        #buf-pattern-cancel-button:focus,
         #buf-pattern-export-button:focus {
             outline: 2px solid #0073aa;
             outline-offset: 2px;
@@ -719,6 +723,7 @@ function buf_render_admin_page() {
                         searchBlockBatch(block, postTypes, data.next_offset, accumulated);
                     } else {
                         $('#buf-search-button').prop('disabled', false).attr('aria-busy', 'false');
+                        $('#buf-cancel-button').hide();
                         if (accumulated.length > 0) {
                             $('#buf-export-button').show();
                         }
@@ -764,6 +769,7 @@ function buf_render_admin_page() {
                 var html = '<div role="alert" class="notice notice-error"><p><strong><?php echo esc_js( __( 'Error:', 'block-usage-finder' ) ); ?></strong> '+ message +'</p></div>';
                 $('#buf-search-results').html(html);
                 $('#buf-search-button').prop('disabled', false).attr('aria-busy', 'false');
+                $('#buf-cancel-button').hide();
             }
 
             function searchBlock(block) {
@@ -771,6 +777,7 @@ function buf_render_admin_page() {
                 allResults = [];
                 $('#buf-export-button').hide();
                 $('#buf-search-button').prop('disabled', true).attr('aria-busy', 'true');
+                $('#buf-cancel-button').show();
                 updateProgress(0, 0);
 
                 ensureFreshNonce(function() {
@@ -780,6 +787,15 @@ function buf_render_admin_page() {
 
             $('#buf-search-button').on('click', function(){
                 searchBlock( $('#buf-block-name').val() );
+            });
+
+            // Cancel block search
+            $('#buf-cancel-button').on('click', function(){
+                currentSearch = null;
+                $('#buf-search-button').prop('disabled', false).attr('aria-busy', 'false');
+                $('#buf-cancel-button').hide();
+                var html = '<div role="alert" class="notice notice-warning"><p><?php echo esc_js( __( 'Search cancelled.', 'block-usage-finder' ) ); ?></p></div>';
+                $('#buf-search-results').html(html);
             });
 
             // CSV Export
@@ -867,6 +883,7 @@ function buf_render_admin_page() {
                         searchPatternBatch(patternId, postTypes, data.next_offset, accumulated);
                     } else {
                         $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+                        $('#buf-pattern-cancel-button').hide();
                         if (accumulated.length > 0) {
                             $('#buf-pattern-export-button').show();
                         }
@@ -912,6 +929,7 @@ function buf_render_admin_page() {
                 var html = '<div role="alert" class="notice notice-error"><p><strong><?php echo esc_js( __( 'Error:', 'block-usage-finder' ) ); ?></strong> '+ message +'</p></div>';
                 $('#buf-pattern-search-results').html(html);
                 $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+                $('#buf-pattern-cancel-button').hide();
             }
 
             function searchPattern(patternId) {
@@ -924,6 +942,7 @@ function buf_render_admin_page() {
                 allPatternResults = [];
                 $('#buf-pattern-export-button').hide();
                 $('#buf-pattern-search-button').prop('disabled', true).attr('aria-busy', 'true');
+                $('#buf-pattern-cancel-button').show();
                 updatePatternProgress(0, 0);
 
                 ensureFreshNonce(function() {
@@ -934,6 +953,15 @@ function buf_render_admin_page() {
             // Pattern search button handler
             $('#buf-pattern-search-button').on('click', function(){
                 searchPattern( $('#buf-pattern-dropdown').val() );
+            });
+
+            // Cancel pattern search
+            $('#buf-pattern-cancel-button').on('click', function(){
+                currentPatternSearch = null;
+                $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+                $('#buf-pattern-cancel-button').hide();
+                var html = '<div role="alert" class="notice notice-warning"><p><?php echo esc_js( __( 'Search cancelled.', 'block-usage-finder' ) ); ?></p></div>';
+                $('#buf-pattern-search-results').html(html);
             });
 
             // Pattern CSV Export
