@@ -515,6 +515,7 @@ function buf_render_admin_page() {
                 <button id="buf-export-button" class="button" style="display:none;"><?php esc_html_e( 'Export CSV', 'block-usage-finder' ); ?></button>
             </div>
         </div>
+        <div id="buf-progress" class="buf-progress-container" role="status" aria-live="polite"></div>
         <hr style="margin: 30px 0;">
         <h2><?php esc_html_e( 'Search for Synced Pattern Usage', 'block-usage-finder' ); ?></h2>
         <div role="search" aria-label="<?php esc_attr_e( 'Search for synced pattern usage', 'block-usage-finder' ); ?>">
@@ -549,6 +550,9 @@ function buf_render_admin_page() {
                 <button id="buf-pattern-export-button" class="button" style="display:none;"><?php esc_html_e( 'Export CSV', 'block-usage-finder' ); ?></button>
             </div>
         </div>
+        <div id="buf-pattern-progress" class="buf-progress-container" role="status" aria-live="polite"></div>
+        <hr style="margin: 30px 0;">
+        <h2><?php esc_html_e( 'Results', 'block-usage-finder' ); ?></h2>
         <div id="buf-pattern-search-results"
              class="buf-results-container"
              role="region"
@@ -609,8 +613,12 @@ function buf_render_admin_page() {
             font-weight: 600;
             margin-bottom: 0.5em;
         }
+        .buf-progress-container {
+            margin-top: 20px;
+        }
         .buf-progress-bar {
             background: #f0f0f1;
+            border: 1px solid #8c8f94;
             border-radius: 3px;
             height: 20px;
             margin: 10px 0;
@@ -620,6 +628,35 @@ function buf_render_admin_page() {
             background: #2271b1;
             height: 100%;
             transition: width 0.3s ease;
+        }
+        .buf-results-table th.sortable {
+            cursor: pointer;
+        }
+        .buf-results-table th.sortable a {
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+        .buf-results-table th.sortable .sorting-indicator {
+            width: 10px;
+            height: 4px;
+            margin: 0 0 0 7px;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .buf-results-table th.sortable.sorted .sorting-indicator:before {
+            content: "";
+            width: 0;
+            height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            display: inline-block;
+        }
+        .buf-results-table th.sortable.sorted.asc .sorting-indicator:before {
+            border-bottom: 4px solid #444;
+        }
+        .buf-results-table th.sortable.sorted.desc .sorting-indicator:before {
+            border-top: 4px solid #444;
         }
     </style>
     <script>
@@ -675,6 +712,73 @@ function buf_render_admin_page() {
                 return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
             }
 
+            // Sanitize CSV value to prevent formula injection
+            function sanitizeCsvValue(value) {
+                value = String(value);
+                // Escape double quotes for CSV format
+                value = value.replace(/"/g, '""');
+                // Prevent formula injection by prefixing dangerous characters with single quote
+                if (/^[=+\-@|%]/.test(value)) {
+                    value = "'" + value;
+                }
+                return value;
+            }
+
+            // Format date to match WordPress admin style
+            function formatDate(dateString) {
+                var date = new Date(dateString);
+                if (isNaN(date.getTime())) return dateString;
+
+                var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                var year = date.getFullYear();
+                var month = months[date.getMonth()];
+                var day = date.getDate();
+
+                return month + ' ' + day + ', ' + year;
+            }
+
+            // Initialize table sorting
+            function initTableSort(containerSelector) {
+                $(containerSelector + ' .buf-results-table th.sortable a').off('click').on('click', function(e){
+                    e.preventDefault();
+                    var $th = $(this).closest('th');
+                    var column = $th.data('column');
+                    var $table = $th.closest('table');
+                    var isAsc = $th.hasClass('sorted') && $th.hasClass('asc');
+
+                    // Remove sorted class from all headers
+                    $table.find('th').removeClass('sorted asc desc');
+
+                    // Add sorted class to current header
+                    $th.addClass('sorted').addClass(isAsc ? 'desc' : 'asc');
+
+                    // Sort the rows
+                    var $rows = $table.find('tbody tr').get();
+                    $rows.sort(function(a, b){
+                        var aVal = $(a).data(column);
+                        var bVal = $(b).data(column);
+
+                        // Handle date sorting
+                        if (column === 'date') {
+                            aVal = new Date(aVal).getTime();
+                            bVal = new Date(bVal).getTime();
+                        } else {
+                            // Case-insensitive string sorting
+                            aVal = String(aVal).toLowerCase();
+                            bVal = String(bVal).toLowerCase();
+                        }
+
+                        if (aVal < bVal) return isAsc ? 1 : -1;
+                        if (aVal > bVal) return isAsc ? -1 : 1;
+                        return 0;
+                    });
+
+                    $.each($rows, function(index, row){
+                        $table.find('tbody').append(row);
+                    });
+                });
+            }
+
             function getSelectedPostTypes() {
                 var selected = $('#buf-post-types').val();
                 return selected && selected.length ? selected : ['post', 'page'];
@@ -724,6 +828,7 @@ function buf_render_admin_page() {
                     } else {
                         $('#buf-search-button').prop('disabled', false).attr('aria-busy', 'false');
                         $('#buf-cancel-button').hide();
+                        $('#buf-progress').hide();
                         if (accumulated.length > 0) {
                             $('#buf-export-button').show();
                         }
@@ -738,7 +843,7 @@ function buf_render_admin_page() {
                 html += '<div class="buf-progress-fill" style="width: ' + percent + '%"></div>';
                 html += '</div>';
                 html += '<p><?php echo esc_js( __( 'Searching...', 'block-usage-finder' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'block-usage-finder' ) ); ?></p>';
-                $('#buf-search-results').html(html);
+                $('#buf-progress').html(html);
             }
 
             function displayResults(data, isComplete) {
@@ -752,17 +857,32 @@ function buf_render_admin_page() {
                         html += ' <?php echo esc_js( __( 'found', 'block-usage-finder' ) ); ?>';
                     }
                     html += '</p>';
-                    html += '<ul>';
+                    html += '<table class="wp-list-table widefat fixed striped buf-results-table">';
+                    html += '<thead><tr>';
+                    html += '<th class="sortable" data-column="title"><a href="#"><span><?php echo esc_js( __( 'Title', 'block-usage-finder' ) ); ?></span><span class="sorting-indicator"></span></a></th>';
+                    html += '<th class="sortable" data-column="type"><a href="#"><span><?php echo esc_js( __( 'Type', 'block-usage-finder' ) ); ?></span><span class="sorting-indicator"></span></a></th>';
+                    html += '<th class="sortable sorted desc" data-column="date"><a href="#"><span><?php echo esc_js( __( 'Date', 'block-usage-finder' ) ); ?></span><span class="sorting-indicator"></span></a></th>';
+                    html += '<th><?php echo esc_js( __( 'Actions', 'block-usage-finder' ) ); ?></th>';
+                    html += '</tr></thead><tbody>';
                     data.forEach(function(item){
-                        if (item && item.edit_link && item.title && item.type) {
-                            html += '<li><a href="'+ escapeHtml(item.edit_link) +'" aria-label="<?php echo esc_js( __( 'Edit', 'block-usage-finder' ) ); ?> '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'">'+ escapeHtml(item.title) +'</a> <span class="post-type-label">('+ escapeHtml(item.type) +')</span></li>';
+                        if (item && item.edit_link && item.view_link && item.title && item.type && item.date) {
+                            html += '<tr data-title="'+ escapeHtml(item.title) +'" data-type="'+ escapeHtml(item.type) +'" data-date="'+ escapeHtml(item.date) +'">';
+                            html += '<td><strong>'+ escapeHtml(item.title) +'</strong></td>';
+                            html += '<td>'+ escapeHtml(item.type) +'</td>';
+                            html += '<td>'+ formatDate(item.date) +'</td>';
+                            html += '<td>';
+                            html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="<?php echo esc_js( __( 'View', 'block-usage-finder' ) ); ?> '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank"><?php echo esc_js( __( 'View', 'block-usage-finder' ) ); ?></a> ';
+                            html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="<?php echo esc_js( __( 'Edit', 'block-usage-finder' ) ); ?> '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'"><?php echo esc_js( __( 'Edit', 'block-usage-finder' ) ); ?></a>';
+                            html += '</td>';
+                            html += '</tr>';
                         }
                     });
-                    html += '</ul>';
+                    html += '</tbody></table>';
                 } else if (isComplete) {
                     html = '<p><?php echo esc_js( __( 'No content found using that block.', 'block-usage-finder' ) ); ?></p>';
                 }
                 $('#buf-search-results').html(html).attr('tabindex', '-1').focus();
+                initTableSort('#buf-search-results');
             }
 
             function displayError(message) {
@@ -770,6 +890,7 @@ function buf_render_admin_page() {
                 $('#buf-search-results').html(html);
                 $('#buf-search-button').prop('disabled', false).attr('aria-busy', 'false');
                 $('#buf-cancel-button').hide();
+                $('#buf-progress').hide();
             }
 
             function searchBlock(block) {
@@ -778,6 +899,8 @@ function buf_render_admin_page() {
                 $('#buf-export-button').hide();
                 $('#buf-search-button').prop('disabled', true).attr('aria-busy', 'true');
                 $('#buf-cancel-button').show();
+                $('#buf-search-results').empty();
+                $('#buf-progress').show();
                 updateProgress(0, 0);
 
                 ensureFreshNonce(function() {
@@ -794,17 +917,19 @@ function buf_render_admin_page() {
                 currentSearch = null;
                 $('#buf-search-button').prop('disabled', false).attr('aria-busy', 'false');
                 $('#buf-cancel-button').hide();
+                $('#buf-progress').hide();
                 var html = '<div role="alert" class="notice notice-warning"><p><?php echo esc_js( __( 'Search cancelled.', 'block-usage-finder' ) ); ?></p></div>';
                 $('#buf-search-results').html(html);
             });
 
             // CSV Export
             $('#buf-export-button').on('click', function(){
-                var csv = 'Title,Type,Edit Link\n';
+                var csv = 'Title,Type,Date,View Link\n';
                 allResults.forEach(function(item){
-                    csv += '"' + String(item.title).replace(/"/g, '""') + '",';
-                    csv += '"' + String(item.type).replace(/"/g, '""') + '",';
-                    csv += '"' + String(item.edit_link).replace(/"/g, '""') + '"\n';
+                    csv += '"' + sanitizeCsvValue(item.title) + '",';
+                    csv += '"' + sanitizeCsvValue(item.type) + '",';
+                    csv += '"' + sanitizeCsvValue(item.date) + '",';
+                    csv += '"' + sanitizeCsvValue(item.view_link) + '"\n';
                 });
 
                 var blob = new Blob([csv], { type: 'text/csv' });
@@ -884,6 +1009,7 @@ function buf_render_admin_page() {
                     } else {
                         $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
                         $('#buf-pattern-cancel-button').hide();
+                        $('#buf-pattern-progress').hide();
                         if (accumulated.length > 0) {
                             $('#buf-pattern-export-button').show();
                         }
@@ -898,7 +1024,7 @@ function buf_render_admin_page() {
                 html += '<div class="buf-progress-fill" style="width: ' + percent + '%"></div>';
                 html += '</div>';
                 html += '<p><?php echo esc_js( __( 'Searching...', 'block-usage-finder' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'block-usage-finder' ) ); ?></p>';
-                $('#buf-pattern-search-results').html(html);
+                $('#buf-pattern-progress').html(html);
             }
 
             function displayPatternResults(data, isComplete) {
@@ -912,17 +1038,32 @@ function buf_render_admin_page() {
                         html += ' <?php echo esc_js( __( 'found', 'block-usage-finder' ) ); ?>';
                     }
                     html += '</p>';
-                    html += '<ul>';
+                    html += '<table class="wp-list-table widefat fixed striped buf-results-table">';
+                    html += '<thead><tr>';
+                    html += '<th class="sortable" data-column="title"><a href="#"><span><?php echo esc_js( __( 'Title', 'block-usage-finder' ) ); ?></span><span class="sorting-indicator"></span></a></th>';
+                    html += '<th class="sortable" data-column="type"><a href="#"><span><?php echo esc_js( __( 'Type', 'block-usage-finder' ) ); ?></span><span class="sorting-indicator"></span></a></th>';
+                    html += '<th class="sortable sorted desc" data-column="date"><a href="#"><span><?php echo esc_js( __( 'Date', 'block-usage-finder' ) ); ?></span><span class="sorting-indicator"></span></a></th>';
+                    html += '<th><?php echo esc_js( __( 'Actions', 'block-usage-finder' ) ); ?></th>';
+                    html += '</tr></thead><tbody>';
                     data.forEach(function(item){
-                        if (item && item.edit_link && item.title && item.type) {
-                            html += '<li><a href="'+ escapeHtml(item.edit_link) +'" aria-label="<?php echo esc_js( __( 'Edit', 'block-usage-finder' ) ); ?> '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'">'+ escapeHtml(item.title) +'</a> <span class="post-type-label">('+ escapeHtml(item.type) +')</span></li>';
+                        if (item && item.edit_link && item.view_link && item.title && item.type && item.date) {
+                            html += '<tr data-title="'+ escapeHtml(item.title) +'" data-type="'+ escapeHtml(item.type) +'" data-date="'+ escapeHtml(item.date) +'">';
+                            html += '<td><strong>'+ escapeHtml(item.title) +'</strong></td>';
+                            html += '<td>'+ escapeHtml(item.type) +'</td>';
+                            html += '<td>'+ formatDate(item.date) +'</td>';
+                            html += '<td>';
+                            html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="<?php echo esc_js( __( 'View', 'block-usage-finder' ) ); ?> '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank"><?php echo esc_js( __( 'View', 'block-usage-finder' ) ); ?></a> ';
+                            html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="<?php echo esc_js( __( 'Edit', 'block-usage-finder' ) ); ?> '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'"><?php echo esc_js( __( 'Edit', 'block-usage-finder' ) ); ?></a>';
+                            html += '</td>';
+                            html += '</tr>';
                         }
                     });
-                    html += '</ul>';
+                    html += '</tbody></table>';
                 } else if (isComplete) {
                     html = '<p><?php echo esc_js( __( 'No content found using that synced pattern.', 'block-usage-finder' ) ); ?></p>';
                 }
                 $('#buf-pattern-search-results').html(html).attr('tabindex', '-1').focus();
+                initTableSort('#buf-pattern-search-results');
             }
 
             function displayPatternError(message) {
@@ -930,6 +1071,7 @@ function buf_render_admin_page() {
                 $('#buf-pattern-search-results').html(html);
                 $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
                 $('#buf-pattern-cancel-button').hide();
+                $('#buf-pattern-progress').hide();
             }
 
             function searchPattern(patternId) {
@@ -943,6 +1085,8 @@ function buf_render_admin_page() {
                 $('#buf-pattern-export-button').hide();
                 $('#buf-pattern-search-button').prop('disabled', true).attr('aria-busy', 'true');
                 $('#buf-pattern-cancel-button').show();
+                $('#buf-pattern-search-results').empty();
+                $('#buf-pattern-progress').show();
                 updatePatternProgress(0, 0);
 
                 ensureFreshNonce(function() {
@@ -960,17 +1104,19 @@ function buf_render_admin_page() {
                 currentPatternSearch = null;
                 $('#buf-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
                 $('#buf-pattern-cancel-button').hide();
+                $('#buf-pattern-progress').hide();
                 var html = '<div role="alert" class="notice notice-warning"><p><?php echo esc_js( __( 'Search cancelled.', 'block-usage-finder' ) ); ?></p></div>';
                 $('#buf-pattern-search-results').html(html);
             });
 
             // Pattern CSV Export
             $('#buf-pattern-export-button').on('click', function(){
-                var csv = 'Title,Type,Edit Link\n';
+                var csv = 'Title,Type,Date,View Link\n';
                 allPatternResults.forEach(function(item){
-                    csv += '"' + String(item.title).replace(/"/g, '""') + '",';
-                    csv += '"' + String(item.type).replace(/"/g, '""') + '",';
-                    csv += '"' + String(item.edit_link).replace(/"/g, '""') + '"\n';
+                    csv += '"' + sanitizeCsvValue(item.title) + '",';
+                    csv += '"' + sanitizeCsvValue(item.type) + '",';
+                    csv += '"' + sanitizeCsvValue(item.date) + '",';
+                    csv += '"' + sanitizeCsvValue(item.view_link) + '"\n';
                 });
 
                 var blob = new Blob([csv], { type: 'text/csv' });
@@ -1084,11 +1230,16 @@ function buf_ajax_search_block() {
         $results = [];
 
         foreach ( $search_result['posts'] as $post ) {
+            // Get the post date (use modified if available, otherwise published)
+            $post_date = ! empty( $post->post_modified ) ? $post->post_modified : $post->post_date;
+
             $results[] = [
                 'id'        => absint( $post->ID ),
                 'title'     => get_the_title( $post ),
                 'edit_link' => esc_url( get_edit_post_link( $post ) ),
+                'view_link' => esc_url( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
+                'date'      => $post_date,
             ];
         }
 
@@ -1174,11 +1325,16 @@ function buf_ajax_search_pattern() {
         $results = [];
 
         foreach ( $search_result['posts'] as $post ) {
+            // Get the post date (use modified if available, otherwise published)
+            $post_date = ! empty( $post->post_modified ) ? $post->post_modified : $post->post_date;
+
             $results[] = [
                 'id'        => absint( $post->ID ),
                 'title'     => get_the_title( $post ),
                 'edit_link' => esc_url( get_edit_post_link( $post ) ),
+                'view_link' => esc_url( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
+                'date'      => $post_date,
             ];
         }
 
