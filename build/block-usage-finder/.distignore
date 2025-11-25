@@ -1,0 +1,15 @@
+﻿/.git
+/.github
+/.claude
+/build
+/node_modules
+.gitignore
+.distignore
+build.sh
+build.bat
+build.ps1
+CLAUDE.md
+SECURITY.md
+*.zip
+.DS_Store
+Thumbs.db
