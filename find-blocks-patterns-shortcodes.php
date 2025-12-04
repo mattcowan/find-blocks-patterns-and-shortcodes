@@ -102,6 +102,20 @@ function fbps_deactivate() {
 }
 
 /**
+ * Add plugin action links (Settings link on plugins page).
+ */
+add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), 'fbps_plugin_action_links' );
+function fbps_plugin_action_links( $links ) {
+    $settings_link = sprintf(
+        '<a href="%s">%s</a>',
+        esc_url( admin_url( 'tools.php?page=find-blocks-patterns-shortcodes' ) ),
+        __( 'Admin Page (also found under Tools)', 'find-blocks-patterns-shortcodes' )
+    );
+    array_unshift( $links, $settings_link );
+    return $links;
+}
+
+/**
  * Clean up user-specific transients on user deletion.
  */
 add_action( 'delete_user', 'fbps_cleanup_user_transients' );
@@ -486,6 +500,34 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 }
 
 /**
+ * Get total count of posts to search through for progress calculation.
+ */
+function fbps_get_total_posts_count( $post_types = [] ) {
+    // Default to all public post types if none specified
+    if ( empty( $post_types ) ) {
+        $post_types = [ 'post', 'page' ];
+    } else {
+        // Sanitize post types
+        $post_types = array_map( 'sanitize_key', (array) $post_types );
+    }
+
+    $count = wp_count_posts();
+    $total = 0;
+
+    foreach ( $post_types as $post_type ) {
+        $count_obj = wp_count_posts( $post_type );
+        if ( $count_obj ) {
+            // Sum all statuses
+            foreach ( get_object_vars( $count_obj ) as $status => $count_value ) {
+                $total += (int) $count_value;
+            }
+        }
+    }
+
+    return $total;
+}
+
+/**
  * Returns an array of WP_Post objects that contain the specified block.
  */
 function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
@@ -789,18 +831,28 @@ function fbps_render_admin_page() {
         .fbps-progress-container {
             margin-top: 20px;
         }
-        .fbps-progress-bar {
-            background: #f0f0f1;
-            border: 1px solid #8c8f94;
-            border-radius: 3px;
+        .fbps-progress-spinner {
+            display: inline-block;
+            width: 20px;
             height: 20px;
-            margin: 10px 0;
-            overflow: hidden;
+            border: 3px solid #f0f0f1;
+            border-top-color: #2271b1;
+            border-radius: 50%;
+            animation: fbps-spinner-rotation 0.8s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
         }
-        .fbps-progress-fill {
-            background: #2271b1;
-            height: 100%;
-            transition: width 0.3s ease;
+        @keyframes fbps-spinner-rotation {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        .fbps-progress-message {
+            display: inline-block;
+            vertical-align: middle;
         }
         .fbps-results-table th.sortable {
             cursor: pointer;
@@ -990,9 +1042,13 @@ function fbps_render_admin_page() {
                     accumulated = accumulated.concat(data.results);
                     allResults = accumulated;
 
+                    // Store total_posts from first batch
+                    if (data.total_posts) {
+                        window.fbps_total_posts = data.total_posts;
+                    }
+
                     // Update progress
-                    var progress = data.progress || 100;
-                    updateProgress(progress, accumulated.length);
+                    updateProgress(accumulated.length);
 
                     // Display current results
                     displayResults(accumulated, !data.has_more);
@@ -1013,11 +1069,11 @@ function fbps_render_admin_page() {
                 });
             }
 
-            function updateProgress(percent, count) {
-                var html = '<div class="fbps-progress-bar" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100">';
-                html += '<div class="fbps-progress-fill" style="width: ' + percent + '%"></div>';
-                html += '</div>';
-                html += '<p><?php echo esc_js( __( 'Searching...', 'find-blocks-patterns-shortcodes' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'find-blocks-patterns-shortcodes' ) ); ?></p>';
+            function updateProgress(count) {
+                var html = '<div class="fbps-progress-spinner" role="status" aria-label="<?php echo esc_js( __( 'Searching', 'find-blocks-patterns-shortcodes' ) ); ?>"></div>';
+                html += '<span class="fbps-progress-message">';
+                html += '<?php echo esc_js( __( 'Searching...', 'find-blocks-patterns-shortcodes' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'find-blocks-patterns-shortcodes' ) ); ?>';
+                html += '</span>';
                 $('#fbps-progress').html(html);
             }
 
@@ -1079,7 +1135,7 @@ function fbps_render_admin_page() {
                 $('#fbps-pattern-search-results').empty();
                 $('#fbps-shortcode-search-results').empty();
                 $('#fbps-progress').show();
-                updateProgress(0, 0);
+                updateProgress(0);
 
                 ensureFreshNonce(function() {
                     searchBlockBatch(block, getSelectedPostTypes(), 0, []);
@@ -1193,9 +1249,13 @@ function fbps_render_admin_page() {
                     accumulated = accumulated.concat(data.results);
                     allPatternResults = accumulated;
 
+                    // Store total_posts from first batch
+                    if (data.total_posts) {
+                        window.fbps_pattern_total_posts = data.total_posts;
+                    }
+
                     // Update progress
-                    var progress = data.progress || 100;
-                    updatePatternProgress(progress, accumulated.length);
+                    updatePatternProgress(accumulated.length);
 
                     // Display current results
                     displayPatternResults(accumulated, !data.has_more);
@@ -1216,11 +1276,11 @@ function fbps_render_admin_page() {
                 });
             }
 
-            function updatePatternProgress(percent, count) {
-                var html = '<div class="fbps-progress-bar" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100">';
-                html += '<div class="fbps-progress-fill" style="width: ' + percent + '%"></div>';
-                html += '</div>';
-                html += '<p><?php echo esc_js( __( 'Searching...', 'find-blocks-patterns-shortcodes' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'find-blocks-patterns-shortcodes' ) ); ?></p>';
+            function updatePatternProgress(count) {
+                var html = '<div class="fbps-progress-spinner" role="status" aria-label="<?php echo esc_js( __( 'Searching', 'find-blocks-patterns-shortcodes' ) ); ?>"></div>';
+                html += '<span class="fbps-progress-message">';
+                html += '<?php echo esc_js( __( 'Searching...', 'find-blocks-patterns-shortcodes' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'find-blocks-patterns-shortcodes' ) ); ?>';
+                html += '</span>';
                 $('#fbps-pattern-progress').html(html);
             }
 
@@ -1287,7 +1347,7 @@ function fbps_render_admin_page() {
                 $('#fbps-pattern-search-results').empty();
                 $('#fbps-shortcode-search-results').empty();
                 $('#fbps-pattern-progress').show();
-                updatePatternProgress(0, 0);
+                updatePatternProgress(0);
 
                 ensureFreshNonce(function() {
                     searchPatternBatch(patternId, getSelectedPatternPostTypes(), 0, []);
@@ -1347,9 +1407,13 @@ function fbps_render_admin_page() {
                     accumulated = accumulated.concat(data.results);
                     allShortcodeResults = accumulated;
 
+                    // Store total_posts from first batch
+                    if (data.total_posts) {
+                        window.fbps_shortcode_total_posts = data.total_posts;
+                    }
+
                     // Update progress
-                    var progress = data.progress || 100;
-                    updateShortcodeProgress(progress, accumulated.length);
+                    updateShortcodeProgress(accumulated.length);
 
                     // Display current results
                     displayShortcodeResults(accumulated, !data.has_more);
@@ -1370,11 +1434,11 @@ function fbps_render_admin_page() {
                 });
             }
 
-            function updateShortcodeProgress(percent, count) {
-                var html = '<div class="fbps-progress-bar" role="progressbar" aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100">';
-                html += '<div class="fbps-progress-fill" style="width: ' + percent + '%"></div>';
-                html += '</div>';
-                html += '<p><?php echo esc_js( __( 'Searching...', 'find-blocks-patterns-shortcodes' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'find-blocks-patterns-shortcodes' ) ); ?></p>';
+            function updateShortcodeProgress(count) {
+                var html = '<div class="fbps-progress-spinner" role="status" aria-label="<?php echo esc_js( __( 'Searching', 'find-blocks-patterns-shortcodes' ) ); ?>"></div>';
+                html += '<span class="fbps-progress-message">';
+                html += '<?php echo esc_js( __( 'Searching...', 'find-blocks-patterns-shortcodes' ) ); ?> ' + count + ' <?php echo esc_js( __( 'results found so far', 'find-blocks-patterns-shortcodes' ) ); ?>';
+                html += '</span>';
                 $('#fbps-shortcode-progress').html(html);
             }
 
@@ -1441,7 +1505,7 @@ function fbps_render_admin_page() {
                 $('#fbps-pattern-search-results').empty();
                 $('#fbps-shortcode-search-results').empty();
                 $('#fbps-shortcode-progress').show();
-                updateShortcodeProgress(0, 0);
+                updateShortcodeProgress(0);
 
                 ensureFreshNonce(function() {
                     searchShortcodeBatch(shortcodeName, getSelectedShortcodePostTypes(), 0, []);
@@ -1549,6 +1613,12 @@ function fbps_ajax_search_block() {
             // Continue anyway but log the event
         }
 
+        // Get total count on first request for accurate progress
+        $total_posts = 0;
+        if ( $batch_offset === 0 ) {
+            $total_posts = fbps_get_total_posts_count( $post_types );
+        }
+
         $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, 100 );
         $results = [];
 
@@ -1566,20 +1636,26 @@ function fbps_ajax_search_block() {
             ];
         }
 
-        // Calculate progress percentage
-        $progress = 100;
-        if ( $search_result['has_more'] ) {
-            // Estimate based on batch size
-            $total_estimate = $batch_offset + 200; // Conservative estimate
-            $progress = min( 95, ( $batch_offset / $total_estimate ) * 100 );
+        // Calculate accurate progress
+        $progress = 0;
+        if ( $total_posts > 0 ) {
+            $progress = min( 100, ( ( $batch_offset + 100 ) / $total_posts ) * 100 );
+        } elseif ( ! $search_result['has_more'] ) {
+            $progress = 100;
         }
 
-        wp_send_json_success( [
+        $response = [
             'results' => $results,
             'has_more' => $search_result['has_more'],
             'next_offset' => $search_result['next_offset'],
-            'progress' => $progress,
-        ] );
+            'progress' => round( $progress, 1 ),
+        ];
+
+        if ( $batch_offset === 0 ) {
+            $response['total_posts'] = $total_posts;
+        }
+
+        wp_send_json_success( $response );
 
     } catch ( Exception $e ) {
         // Generic error messages to prevent information disclosure
@@ -1630,6 +1706,12 @@ function fbps_ajax_search_pattern() {
             throw new Exception( 'invalid_pattern' );
         }
 
+        // Get total count on first request for accurate progress
+        $total_posts = 0;
+        if ( $batch_offset === 0 ) {
+            $total_posts = fbps_get_total_posts_count( $post_types );
+        }
+
         $search_result = fbps_get_posts_using_pattern( $pattern_id, $post_types, $batch_offset, 100 );
         $results = [];
 
@@ -1647,20 +1729,26 @@ function fbps_ajax_search_pattern() {
             ];
         }
 
-        // Calculate progress percentage
-        $progress = 100;
-        if ( $search_result['has_more'] ) {
-            // Estimate based on batch size
-            $total_estimate = $batch_offset + 200; // Conservative estimate
-            $progress = min( 95, ( $batch_offset / $total_estimate ) * 100 );
+        // Calculate accurate progress
+        $progress = 0;
+        if ( $total_posts > 0 ) {
+            $progress = min( 100, ( ( $batch_offset + 100 ) / $total_posts ) * 100 );
+        } elseif ( ! $search_result['has_more'] ) {
+            $progress = 100;
         }
 
-        wp_send_json_success( [
+        $response = [
             'results' => $results,
             'has_more' => $search_result['has_more'],
             'next_offset' => $search_result['next_offset'],
-            'progress' => $progress,
-        ] );
+            'progress' => round( $progress, 1 ),
+        ];
+
+        if ( $batch_offset === 0 ) {
+            $response['total_posts'] = $total_posts;
+        }
+
+        wp_send_json_success( $response );
 
     } catch ( Exception $e ) {
         // Generic error messages to prevent information disclosure
@@ -1721,7 +1809,14 @@ function fbps_ajax_search_shortcode() {
 			// Continue anyway but log the event - shortcode might have been used before being unregistered
 		}
 
+	// Get total count on first request for accurate progress
+		$total_posts = 0;
+		if ( $batch_offset === 0 ) {
+			$total_posts = fbps_get_total_posts_count( $post_types );
+		}
+
 		$search_result = fbps_get_posts_using_shortcode( $shortcode_name, $post_types, $batch_offset, 100 );
+
 		$results = [];
 
 		foreach ( $search_result['posts'] as $post ) {
@@ -1738,20 +1833,27 @@ function fbps_ajax_search_shortcode() {
 			];
 		}
 
-		// Calculate progress percentage
-		$progress = 100;
-		if ( $search_result['has_more'] ) {
-			// Estimate based on batch size
-			$total_estimate = $batch_offset + 200; // Conservative estimate
-			$progress = min( 95, ( $batch_offset / $total_estimate ) * 100 );
+		// Calculate accurate progress
+		$progress = 0;
+		if ( $total_posts > 0 ) {
+			$progress = min( 100, ( ( $batch_offset + 100 ) / $total_posts ) * 100 );
+		} elseif ( ! $search_result['has_more'] ) {
+			$progress = 100;
 		}
 
-		wp_send_json_success( [
+		$response = [
 			'results' => $results,
 			'has_more' => $search_result['has_more'],
 			'next_offset' => $search_result['next_offset'],
-			'progress' => $progress,
-		] );
+			'progress' => round( $progress, 1 ),
+		];
+
+		if ( $batch_offset === 0 ) {
+			$response['total_posts'] = $total_posts;
+		}
+
+		wp_send_json_success( $response );
+
 
 	} catch ( Exception $e ) {
 		// Generic error messages to prevent information disclosure
@@ -1942,3 +2044,4 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 
     WP_CLI::add_command( 'fbps', 'FBPS_CLI' );
 }
+
