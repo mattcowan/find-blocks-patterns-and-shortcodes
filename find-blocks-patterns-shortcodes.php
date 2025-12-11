@@ -1810,7 +1810,7 @@ function fbps_ajax_search_shortcode() {
 		}
 
 	// Get total count on first request for accurate progress
-		$total_posts = 0;
+    $total_posts = 0;
 		if ( $batch_offset === 0 ) {
 			$total_posts = fbps_get_total_posts_count( $post_types );
 		}
