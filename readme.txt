@@ -24,18 +24,16 @@ Find Blocks, Patterns & Shortcodes helps WordPress administrators quickly locate
 * **Real-time results** with sortable tables
 * **WP-CLI support** for automation
 
-= Security (10/10 Rating) =
+= Security =
 
 * Enhanced input validation with blacklisting
 * Dual-layer rate limiting (user + IP)
-* Security event logging and audit trail
-* Custom capability system
 * Timeout protection (25-second safeguard)
 * Information disclosure prevention
 * XSS and injection prevention
 * Nonce auto-refresh for long sessions
 
-= Accessibility (WCAG 2.1 AA Compliant) =
+= Accessibility =
 
 * Screen reader compatible with ARIA live regions
 * Full keyboard navigation support
@@ -100,7 +98,10 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 
 == Changelog ==
 
-= 2.0.0 =
+= 1.0.0 =
+* Initial release
+* Basic block search functionality
+* Security hardening (10/10 rating)
 * Added progressive batch search for large sites
 * Added post type filtering
 * Added CSV export functionality
@@ -110,19 +111,7 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 * Added cancel search functionality
 * Added sortable results tables
 * Enhanced security with IP-based rate limiting
-* Improved accessibility (WCAG 2.1 AA)
 * Performance optimizations
-
-= 1.0.0 =
-* Initial release
-* Basic block search functionality
-* Security hardening (10/10 rating)
-* WCAG 2.1 AA accessibility
-
-== Upgrade Notice ==
-
-= 2.0.0 =
-Major update with progressive search, post type filtering, CSV export, pattern search, and WP-CLI support. Fully backward compatible.
 
 == WP-CLI Commands ==
 
