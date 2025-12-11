@@ -109,7 +109,7 @@ function fbps_plugin_action_links( $links ) {
     $settings_link = sprintf(
         '<a href="%s">%s</a>',
         esc_url( admin_url( 'tools.php?page=find-blocks-patterns-shortcodes' ) ),
-        __( 'Admin Page (also found under Tools)', 'find-blocks-patterns-shortcodes' )
+        __( 'Find Content', 'find-blocks-patterns-shortcodes' )
     );
     array_unshift( $links, $settings_link );
     return $links;
