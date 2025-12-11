@@ -4,12 +4,12 @@ REM Creates a release-ready zip file for WordPress.org submission
 
 setlocal enabledelayedexpansion
 
-set PLUGIN_SLUG=block-usage-finder
+set PLUGIN_SLUG=find-blocks-patterns-shortcodes
 set BUILD_DIR=build
 set RELEASE_DIR=%BUILD_DIR%\%PLUGIN_SLUG%
 
 REM Extract version from plugin file
-for /f "tokens=2" %%a in ('findstr /C:"Version:" block-usage-finder.php') do set PLUGIN_VERSION=%%a
+for /f "tokens=2" %%a in ('findstr /C:"Version:" find-blocks-patterns-shortcodes.php') do set PLUGIN_VERSION=%%a
 set ZIP_FILE=%PLUGIN_SLUG%.zip
 
 echo.
@@ -30,7 +30,7 @@ mkdir "%RELEASE_DIR%"
 
 REM Copy plugin files
 echo Copying plugin files...
-copy block-usage-finder.php "%RELEASE_DIR%\" > nul
+copy find-blocks-patterns-shortcodes.php "%RELEASE_DIR%\" > nul
 copy readme.txt "%RELEASE_DIR%\" > nul
 copy README.md "%RELEASE_DIR%\" > nul
 copy LICENSE "%RELEASE_DIR%\" > nul

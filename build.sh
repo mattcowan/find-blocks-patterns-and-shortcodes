@@ -4,8 +4,8 @@
 
 set -e
 
-PLUGIN_SLUG="block-usage-finder"
-PLUGIN_VERSION=$(grep "Version:" block-usage-finder.php | awk '{print $3}')
+PLUGIN_SLUG="find-blocks-patterns-shortcodes"
+PLUGIN_VERSION=$(grep "Version:" find-blocks-patterns-shortcodes.php | awk '{print $3}')
 BUILD_DIR="build"
 RELEASE_DIR="$BUILD_DIR/$PLUGIN_SLUG"
 ZIP_FILE="$PLUGIN_SLUG.zip"
@@ -25,7 +25,7 @@ mkdir -p "$RELEASE_DIR"
 
 # Copy plugin files
 echo "📋 Copying plugin files..."
-cp block-usage-finder.php "$RELEASE_DIR/"
+cp find-blocks-patterns-shortcodes.php "$RELEASE_DIR/"
 cp readme.txt "$RELEASE_DIR/"
 cp README.md "$RELEASE_DIR/"
 cp LICENSE "$RELEASE_DIR/"

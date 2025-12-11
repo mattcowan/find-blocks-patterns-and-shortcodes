@@ -8,11 +8,11 @@ Stable tag: 1.0.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Find which posts and pages use specific Gutenberg blocks with advanced search, security hardening, and full accessibility support.
+Find which posts and pages use specific Gutenberg blocks, patterns, and shortcodes with advanced search and CSV export functionality.
 
 == Description ==
 
-Find Blocks, Patterns & Shortcodes helps WordPress administrators quickly locate posts and pages containing specific Gutenberg blocks. Perfect for content audits, site migrations, and block usage analysis.
+Find Blocks, Patterns & Shortcodes locates content containing specific Gutenberg blocks, with a CSV export feature perfect for audits & analysis.
 
 = Core Features =
 
