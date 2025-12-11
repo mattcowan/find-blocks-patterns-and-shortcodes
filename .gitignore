@@ -16,3 +16,6 @@ Security.md
 
 # .zip
 *.zip
+
+Build files
+build/
