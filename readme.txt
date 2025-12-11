@@ -1,5 +1,5 @@
 === Find Blocks, Patterns & Shortcodes ===
-Contributors: mattcowan
+Contributors: matthewneilcowan
 Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
 Tested up to: 6.9
