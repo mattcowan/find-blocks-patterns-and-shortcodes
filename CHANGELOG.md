@@ -6,9 +6,18 @@ All notable changes to the Find Blocks, Patterns, and Shortcodes plugin will be 
 
 ### Features
 - Search functionality for Gutenberg blocks, reusable patterns, and shortcodes
-- Dynamic search with 500ms debouncing
+- Progressive batch search (100 posts per batch) for large sites
+- Post type filtering (posts, pages, custom post types)
+- CSV export functionality for reporting and analysis
+- Block dropdown with all registered blocks
+- Synced pattern search for reusable blocks/patterns
+- Shortcode search and usage tracking
+- Sortable results tables (by title, type, date)
+- Cancellable searches with progress indicators
+- Smart caching with 5-minute TTL
+- WP-CLI support for automation
 - Admin interface with search icon in WordPress menu
-- Direct edit links in search results
+- Direct edit and view links in search results
 - Keyboard navigation with Enter key support
 
 ### Security

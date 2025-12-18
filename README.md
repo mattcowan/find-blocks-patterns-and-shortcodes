@@ -9,9 +9,16 @@ Find Blocks, Patterns, and Shortcodes adds an admin interface for searching post
 ## Features
 
 ### Core Features
-- **Dynamic search** with 500ms debouncing
-- **Search results** showing post title, type, and direct edit links
-- **Clean admin interface** with search icon in WordPress menu
+- **Progressive batch search** for large sites (100 posts per batch)
+- **Search results** showing post title, type, date, and direct edit/view links
+- **Sortable results tables** for easy analysis
+- **CSV export** functionality for reporting
+- **Post type filtering** - search across posts, pages, or custom post types
+- **Block dropdown** - select from all registered blocks
+- **Synced pattern search** - find usage of reusable blocks/patterns
+- **Shortcode search** - locate shortcode usage across content
+- **Cancellable searches** with progress indicators
+- **WP-CLI support** for automation
 - **Keyboard accessible** with full Enter key support
 
 ### Security Features
@@ -21,7 +28,12 @@ Find Blocks, Patterns, and Shortcodes adds an admin interface for searching post
 - **Timeout and abuse prevention** - Protection against server overload, information disclosure, and injection attacks
 
 ### Accessibility Features
-Implements accessibility features including screen reader support with ARIA live regions, keyboard navigation, form labels, focus management with visible indicators, results announcements for assistive technology, and responsive design supporting 200% zoom.
+- **WCAG 2.1 Level AA compliant** with full accessibility implementation
+- **Screen reader support** with ARIA live regions and result announcements
+- **Keyboard navigation** throughout interface with Enter key support
+- **Form labels** for all inputs with proper associations
+- **Focus management** with visible focus indicators (2px outline)
+- **Responsive design** supporting 200% zoom
 
 ## Installation
 
@@ -32,11 +44,14 @@ Implements accessibility features including screen reader support with ARIA live
 
 ## Usage
 
-1. Navigate to **Block Usage** in your WordPress admin menu
-2. Enter a block name (e.g., `core/paragraph`, `core/heading`, `core/gallery`)
-3. Results appear automatically as you type (with 500ms debounce)
-4. Click any result to edit that post or page
-5. Press **Enter** to search immediately without waiting for debounce
+1. Navigate to **Block Usage** in your WordPress admin menu (search icon)
+2. Enter a block name or select from the dropdown (e.g., `core/paragraph`, `core/heading`, `core/gallery`)
+3. Select post types to search (posts, pages, or custom post types)
+4. Click **Search Block** or press **Enter** to start progressive batch search
+5. View sortable results table with title, type, and date
+6. Click **Edit** or **View** links to navigate to posts
+7. Click **Export CSV** to download results for reporting
+8. Use **Cancel** button to stop long-running searches
 
 ### Block Name Format
 Block names must follow the format: `namespace/block-name`
