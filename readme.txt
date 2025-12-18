@@ -21,7 +21,7 @@ Find Blocks, Patterns & Shortcodes locates content containing specific Gutenberg
 * **CSV export** - export results for reporting and analysis
 * **Block dropdown** - select from all registered blocks
 * **Synced pattern search** - find usage of reusable blocks/patterns
-* **Real-time results** with sortable tables
+* **Sortable results tables** for easy analysis
 * **WP-CLI support** for automation
 
 = Security =
