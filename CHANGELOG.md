@@ -2,6 +2,28 @@
 
 All notable changes to the Find Blocks, Patterns, and Shortcodes plugin will be documented in this file.
 
+## [1.0.1] - 2024-12-18
+
+### Changed
+- **Asset Enqueuing Refactor**: Migrated from inline CSS/JS to properly enqueued assets using WordPress standards
+  - Extracted CSS to `assets/css/admin.css` (125 lines)
+  - Extracted JavaScript to `assets/js/admin.js` (685 lines)
+  - Implemented `wp_enqueue_style()` and `wp_enqueue_script()` for proper asset loading
+  - Added `wp_localize_script()` for passing data and translations to JavaScript
+  - Assets now only load on plugin admin page (performance improvement)
+
+### Fixed
+- Added version constant (`FBPS_VERSION`) for consistent versioning across asset files
+- Added translator comment for placeholder string (WordPress i18n best practices)
+- Improved array alignment consistency in `wp_localize_script()` call
+- Reduced main plugin file from 2047 to 1358 lines (-689 lines)
+
+### Technical
+- Better browser caching with separate asset files
+- Improved code maintainability with separation of concerns
+- All 23 translatable strings now properly passed via `wp_localize_script()`
+- WordPress Plugin Review compliant asset handling
+
 ## [1.0.0] - Initial Release
 
 ### Features
