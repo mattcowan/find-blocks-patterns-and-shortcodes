@@ -1,0 +1,127 @@
+/**
+ * Admin styles for Find Blocks, Patterns & Shortcodes plugin
+ * Loaded only on the plugin's admin page
+ */
+
+.fbps-search-field {
+    margin-bottom: 15px;
+}
+
+.fbps-search-input,
+.fbps-block-dropdown,
+.fbps-pattern-dropdown,
+.fbps-shortcode-dropdown {
+    max-width: 300px;
+    width: 100%;
+}
+
+.fbps-post-types-select {
+    max-width: 300px;
+    width: 100%;
+}
+
+.fbps-search-actions {
+    margin-top: 10px;
+}
+
+.fbps-results-container {
+    margin-top: 20px;
+}
+
+.fbps-search-input:focus,
+.fbps-block-dropdown:focus,
+.fbps-pattern-dropdown:focus,
+.fbps-shortcode-dropdown:focus,
+.fbps-post-types-select:focus,
+#fbps-search-button:focus,
+#fbps-cancel-button:focus,
+#fbps-export-button:focus,
+#fbps-pattern-search-button:focus,
+#fbps-pattern-cancel-button:focus,
+#fbps-pattern-export-button:focus,
+#fbps-shortcode-search-button:focus,
+#fbps-shortcode-cancel-button:focus,
+#fbps-shortcode-export-button:focus {
+    outline: 2px solid #0073aa;
+    outline-offset: 2px;
+}
+
+#fbps-search-results a:focus {
+    outline: 2px solid #0073aa;
+    outline-offset: 1px;
+}
+
+.post-type-label {
+    color: #646970;
+    font-style: italic;
+}
+
+.fbps-results-count {
+    font-weight: 600;
+    margin-bottom: 0.5em;
+}
+
+.fbps-progress-container {
+    margin-top: 20px;
+}
+
+.fbps-progress-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid #f0f0f1;
+    border-top-color: #2271b1;
+    border-radius: 50%;
+    animation: fbps-spinner-rotation 0.8s linear infinite;
+    margin-right: 10px;
+    vertical-align: middle;
+}
+
+@keyframes fbps-spinner-rotation {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.fbps-progress-message {
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.fbps-results-table th.sortable {
+    cursor: pointer;
+}
+
+.fbps-results-table th.sortable a {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+.fbps-results-table th.sortable .sorting-indicator {
+    width: 10px;
+    height: 4px;
+    margin: 0 0 0 7px;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.fbps-results-table th.sortable.sorted .sorting-indicator:before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    display: inline-block;
+}
+
+.fbps-results-table th.sortable.sorted.asc .sorting-indicator:before {
+    border-bottom: 4px solid #444;
+}
+
+.fbps-results-table th.sortable.sorted.desc .sorting-indicator:before {
+    border-top: 4px solid #444;
+}
