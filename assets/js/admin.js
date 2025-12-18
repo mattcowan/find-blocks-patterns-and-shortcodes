@@ -578,7 +578,7 @@
                 html += '<th class="sortable sorted desc" data-column="date"><a href="#"><span>' + escapeHtml(fbpsData.i18n.date) + '</span><span class="sorting-indicator"></span></a></th>';
                 html += '<th>' + escapeHtml(fbpsData.i18n.actions) + '</th>';
                 html += '</tr></thead><tbody>';
-            data.forEach(function(item){
+                data.forEach(function(item){
                     if (item && item.edit_link && item.view_link && item.title && item.type && item.date) {
                         html += '<tr data-title="'+ escapeHtml(item.title) +'" data-type="'+ escapeHtml(item.type) +'" data-date="'+ escapeHtml(item.date) +'">';
                         html += '<td><strong>'+ escapeHtml(item.title) +'</strong></td>';
