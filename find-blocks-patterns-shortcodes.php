@@ -139,9 +139,9 @@ function fbps_enqueue_admin_assets( $hook ) {
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( 'fbps_search_nonce' ),
 			'i18n'    => [
-				'searching'         => __( 'Searching', 'find-blocks-patterns-shortcodes' ),
+				'searching'             => __( 'Searching', 'find-blocks-patterns-shortcodes' ),
 				/* translators: %d: number of results found */
-				'searchingProgress' => __( 'Searching... %d results found so far', 'find-blocks-patterns-shortcodes' ),
+				'searchingProgress'     => __( 'Searching... %d results found so far', 'find-blocks-patterns-shortcodes' ),
 				'result'                => __( 'result', 'find-blocks-patterns-shortcodes' ),
 				'results'               => __( 'results', 'find-blocks-patterns-shortcodes' ),
 				'foundSoFar'            => __( 'found so far...', 'find-blocks-patterns-shortcodes' ),
