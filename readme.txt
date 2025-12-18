@@ -4,7 +4,7 @@ Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.0
-Stable tag: 1.0.0
+Stable tag: 1.0.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -97,6 +97,15 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 5. CSV export functionality
 
 == Changelog ==
+
+= 1.0.1 =
+* Refactored asset loading to use WordPress enqueue standards (wp_enqueue_style/wp_enqueue_script)
+* Extracted inline CSS to separate file (assets/css/admin.css)
+* Extracted inline JavaScript to separate file (assets/js/admin.js)
+* Added version constant for consistent cache busting
+* Improved code maintainability and browser caching
+* Added translator comments for i18n best practices
+* WordPress Plugin Review compliant
 
 = 1.0.0 =
 * Initial release
