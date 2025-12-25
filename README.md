@@ -40,11 +40,11 @@ Find Blocks, Patterns, and Shortcodes adds an admin interface for searching post
 1. Upload the `find-blocks-patterns-shortcodes` folder to `/wp-content/plugins/`
 2. Activate the plugin through the Plugins menu in WordPress
 3. The plugin automatically adds the `use_find_blocks_patterns_shortcodes` capability to Administrators
-4. Access via **Block Usage** menu item (with search icon) in the admin menu
+4. Access via **Find Blocks, Patterns & Shortcodes** menu item (with search icon) in the admin menu
 
 ## Usage
 
-1. Navigate to **Block Usage** in your WordPress admin menu (search icon)
+1. Navigate to **Find Blocks, Patterns & Shortcodes** in your WordPress admin menu (search icon)
 2. Enter a block name or select from the dropdown (e.g., `core/paragraph`, `core/heading`, `core/gallery`)
 3. Select post types to search (posts, pages, or custom post types)
 4. Click **Search Block** or press **Enter** to start progressive batch search
