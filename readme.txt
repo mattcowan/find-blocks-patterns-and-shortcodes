@@ -17,12 +17,21 @@ Find Blocks, Patterns & Shortcodes locates content containing specific Gutenberg
 = Core Features =
 
 * **Progressive search** with batch processing for large sites
-* **Post type filtering** - search across posts, pages, or custom post types
-* **CSV export** - export results for reporting and analysis
+* **Post type filtering** - search across posts, pages, or custom post types to find blocks, patterns, and shortcodes
+* **CSV export** - export results for reporting, auditing, and analysis
 * **Block dropdown** - select from all registered blocks
 * **Synced pattern search** - find usage of reusable blocks/patterns
 * **Sortable results tables** for easy analysis
 * **WP-CLI support** for automation
+
+= Performance Optimized =
+
+* Smart caching with 5-minute TTL
+* Batch processing (100 posts per batch)
+* Query optimization (IDs only fetch)
+* Progress indicators for long operations
+* Cancellable searches
+* Hard limit protection (500-1000 posts)
 
 = Security =
 
@@ -41,15 +50,6 @@ Find Blocks, Patterns & Shortcodes locates content containing specific Gutenberg
 * Form labels for all inputs
 * Results count announcements
 * Responsive design with 200% zoom support
-
-= Performance Optimized =
-
-* Smart caching with 5-minute TTL
-* Batch processing (100 posts per batch)
-* Query optimization (IDs only fetch)
-* Progress indicators for long operations
-* Cancellable searches
-* Hard limit protection (500-1000 posts)
 
 == Installation ==
 
@@ -91,10 +91,7 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 == Screenshots ==
 
 1. Main search interface with block dropdown and post type selection
-2. Search results table with sortable columns
-3. Progressive search with progress bar
-4. Synced pattern search interface
-5. CSV export functionality
+2. Search results table with sortable columns and export csv button
 
 == Changelog ==
 
@@ -110,7 +107,6 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 = 1.0.0 =
 * Initial release
 * Basic block search functionality
-* Security hardening (10/10 rating)
 * Added progressive batch search for large sites
 * Added post type filtering
 * Added CSV export functionality
