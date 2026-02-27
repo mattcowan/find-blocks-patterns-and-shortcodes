@@ -973,7 +973,7 @@ function fbps_detect_block_attribute( $post, $class_name = '', $anchor_name = ''
 
     // Match block comment delimiters with JSON attributes
     // e.g. <!-- wp:paragraph {"className":"my-class","anchor":"my-id"} -->
-    if ( ! preg_match_all( '/<!--\s+wp:([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s+(\{[^}]*\})\s+-->/i', $content, $matches, PREG_SET_ORDER ) ) {
+    if ( ! preg_match_all( '/<!--\s+wp:([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s+(\{.*?\})\s+-->/i', $content, $matches, PREG_SET_ORDER ) ) {
         return false;
     }
 
@@ -1036,7 +1036,7 @@ function fbps_extract_block_attributes( $post, $class_name = '', $anchor_name = 
 		return $result;
 	}
 
-	if ( ! preg_match_all( '/<!--\s+wp:([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s+(\{[^}]*\})\s+-->/i', $content, $matches, PREG_SET_ORDER ) ) {
+	if ( ! preg_match_all( '/<!--\s+wp:([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s+(\{.*?\})\s+-->/i', $content, $matches, PREG_SET_ORDER ) ) {
 		return $result;
 	}
 
@@ -1456,7 +1456,7 @@ function fbps_ajax_search_shortcode() {
 		}
 
 	// Get total count on first request for accurate progress
-    $total_posts = 0;
+	$total_posts = 0;
 		if ( $batch_offset === 0 ) {
 			$total_posts = fbps_get_total_posts_count( $post_types );
 		}
