@@ -4,7 +4,7 @@ Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
 Tested up to: 6.9
 Requires PHP: 7.0
-Stable tag: 1.0.1
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -12,7 +12,7 @@ Find which posts and pages use specific Gutenberg blocks, patterns, and shortcod
 
 == Description ==
 
-Find Blocks, Patterns & Shortcodes locates content containing specific Gutenberg blocks, with a CSV export feature perfect for audits & analysis.
+Find Blocks, Patterns & Shortcodes locates content containing specific Gutenberg blocks (including options to search by CSS class and HTML anchor attributes), patterns, and shortcodes, with a CSV export feature perfect for audits & analysis.
 
 = Core Features =
 
@@ -20,6 +20,7 @@ Find Blocks, Patterns & Shortcodes locates content containing specific Gutenberg
 * **Post type filtering** - search across posts, pages, or custom post types to find blocks, patterns, and shortcodes
 * **CSV export** - export results for reporting, auditing, and analysis
 * **Block dropdown** - select from all registered blocks
+* **Attribute search** - find blocks by CSS class and HTML anchor attributes
 * **Synced pattern search** - find usage of reusable blocks/patterns
 * **Sortable results tables** for easy analysis
 * **WP-CLI support** for automation
@@ -94,6 +95,21 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 2. Search results table with sortable columns and export csv button
 
 == Changelog ==
+
+= 1.1.0 =
+* Added CSS class and HTML anchor search for block attributes
+* Search by class/anchor alone or combined with block name
+* Added configurable result table columns (Title, Type, Date shown by default; CSS Class and HTML Anchor optional)
+* Column visibility toggles re-render results in real-time
+* CSV export respects visible column selection
+* Improved sorting arrow UX with larger Unicode indicators and hover states
+* Refactored display functions to shared table builder for consistency
+
+= 1.0.3 =
+* Properly include assets (fixed version number)
+
+= 1.0.2 =
+* Properly include assets
 
 = 1.0.1 =
 * Refactored asset loading to use WordPress enqueue standards (wp_enqueue_style/wp_enqueue_script)

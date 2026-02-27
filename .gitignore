@@ -10,7 +10,6 @@ Thumbs.db
 *.log
 
 #Claude files
-Claude.md
 Security.md
 .claude/
 
