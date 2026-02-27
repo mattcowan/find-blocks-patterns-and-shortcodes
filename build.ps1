@@ -38,9 +38,9 @@ New-Item -ItemType Directory -Path $RELEASE_DIR -Force | Out-Null
 Write-Host "Copying plugin files..." -ForegroundColor Green
 Copy-Item "find-blocks-patterns-shortcodes.php" -Destination $RELEASE_DIR
 Copy-Item "readme.txt" -Destination $RELEASE_DIR
-Copy-Item "README.md" -Destination $RELEASE_DIR
-Copy-Item "LICENSE" -Destination $RELEASE_DIR
-Copy-Item "CHANGELOG.md" -Destination $RELEASE_DIR
+Copy-Item "assets" -Destination "$RELEASE_DIR\assets" -Recurse
+if (Test-Path "README.md") { Copy-Item "README.md" -Destination $RELEASE_DIR }
+if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $RELEASE_DIR }
 
 # Create zip file
 Write-Host "Creating release zip..." -ForegroundColor Green
