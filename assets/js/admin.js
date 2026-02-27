@@ -13,6 +13,26 @@
         var currentSearch = null;
         var currentPatternSearch = null;
         var currentShortcodeSearch = null;
+        var blockSearchComplete = false;
+        var patternSearchComplete = false;
+        var shortcodeSearchComplete = false;
+
+        // Column definitions: key, i18n label key, sortable
+        var columnDefs = {
+            title:     { label: 'title',     sortable: true },
+            type:      { label: 'type',      sortable: true },
+            date:      { label: 'date',      sortable: true },
+            className: { label: 'cssClass',  sortable: true },
+            anchor:    { label: 'htmlAnchor', sortable: true }
+        };
+
+        function getVisibleColumns() {
+            var cols = [];
+            $('.fbps-col-toggle:checked').each(function() {
+                cols.push($(this).val());
+            });
+            return cols;
+        }
 
         // Handle block dropdown selection
         $('#fbps-block-dropdown').on('change', function() {
@@ -98,10 +118,11 @@
                 $th.addClass('sorted').addClass(isAsc ? 'desc' : 'asc');
 
                 // Sort the rows
+                var dataKey = column.toLowerCase();
                 var $rows = $table.find('tbody tr').get();
                 $rows.sort(function(a, b){
-                    var aVal = $(a).data(column);
-                    var bVal = $(b).data(column);
+                    var aVal = $(a).data(dataKey);
+                    var bVal = $(b).data(dataKey);
 
                     // Handle date sorting
                     if (column === 'date') {
@@ -129,17 +150,25 @@
             return selected && selected.length ? selected : ['post', 'page'];
         }
 
-        function searchBlockBatch(block, postTypes, offset, accumulated) {
+        function searchBlockBatch(block, postTypes, offset, accumulated, className, anchorName) {
             offset = offset || 0;
             accumulated = accumulated || [];
 
-            $.post(fbpsData.ajaxUrl, {
+            var postData = {
                 action:      'fbps_search_block',
                 block_name:  block,
                 post_types:  postTypes,
                 batch_offset: offset,
                 _ajax_nonce: currentNonce
-            }, function(response){
+            };
+            if (className) {
+                postData.class_name = className;
+            }
+            if (anchorName) {
+                postData.anchor_name = anchorName;
+            }
+
+            $.post(fbpsData.ajaxUrl, postData, function(response){
                 if (!response || typeof response !== 'object') {
                     displayError(fbpsData.i18n.invalidResponseFormat);
                     return;
@@ -173,7 +202,7 @@
 
                 // Continue batching if more results
                 if (data.has_more && currentSearch === block) {
-                    searchBlockBatch(block, postTypes, data.next_offset, accumulated);
+                    searchBlockBatch(block, postTypes, data.next_offset, accumulated, className, anchorName);
                 } else {
                     $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
                     $('#fbps-cancel-button').hide();
@@ -195,8 +224,9 @@
             $('#fbps-progress').html(html);
         }
 
-        function displayResults(data, isComplete) {
+        function buildResultsTableHtml(data, isComplete, noResultsMsg) {
             var html = '';
+            var cols = getVisibleColumns();
             if (data.length) {
                 html += '<p class="fbps-results-count" aria-live="polite">';
                 html += data.length + ' ' + (data.length === 1 ? fbpsData.i18n.result : fbpsData.i18n.results);
@@ -208,17 +238,32 @@
                 html += '</p>';
                 html += '<table class="wp-list-table widefat fixed striped fbps-results-table">';
                 html += '<thead><tr>';
-                html += '<th class="sortable" data-column="title"><a href="#"><span>' + escapeHtml(fbpsData.i18n.title) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th class="sortable" data-column="type"><a href="#"><span>' + escapeHtml(fbpsData.i18n.type) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th class="sortable sorted desc" data-column="date"><a href="#"><span>' + escapeHtml(fbpsData.i18n.date) + '</span><span class="sorting-indicator"></span></a></th>';
+                cols.forEach(function(col) {
+                    var def = columnDefs[col];
+                    if (def) {
+                        var sortedClass = (col === 'date') ? ' sorted desc' : '';
+                        html += '<th class="sortable' + sortedClass + '" data-column="' + col + '"><a href="#"><span>' + escapeHtml(fbpsData.i18n[def.label]) + '</span><span class="sorting-indicator"></span></a></th>';
+                    }
+                });
                 html += '<th>' + escapeHtml(fbpsData.i18n.actions) + '</th>';
                 html += '</tr></thead><tbody>';
                 data.forEach(function(item){
                     if (item && item.edit_link && item.view_link && item.title && item.type && item.date) {
-                        html += '<tr data-title="'+ escapeHtml(item.title) +'" data-type="'+ escapeHtml(item.type) +'" data-date="'+ escapeHtml(item.date) +'">';
-                        html += '<td><strong>'+ escapeHtml(item.title) +'</strong></td>';
-                        html += '<td>'+ escapeHtml(item.type) +'</td>';
-                        html += '<td>'+ formatDate(item.date) +'</td>';
+                        html += '<tr';
+                        cols.forEach(function(col) {
+                            html += ' data-' + col.toLowerCase() + '="' + escapeHtml(item[col] || '') + '"';
+                        });
+                        html += '>';
+                        cols.forEach(function(col) {
+                            var val = item[col] || '';
+                            if (col === 'title') {
+                                html += '<td><strong>' + escapeHtml(val) + '</strong></td>';
+                            } else if (col === 'date') {
+                                html += '<td>' + formatDate(val) + '</td>';
+                            } else {
+                                html += '<td>' + escapeHtml(val) + '</td>';
+                            }
+                        });
                         html += '<td>';
                         html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.view) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank">' + escapeHtml(fbpsData.i18n.view) + '</a> ';
                         html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.edit) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'">' + escapeHtml(fbpsData.i18n.edit) + '</a>';
@@ -228,8 +273,17 @@
                 });
                 html += '</tbody></table>';
             } else if (isComplete) {
-                html = '<p>' + escapeHtml(fbpsData.i18n.noBlockResults) + '</p>';
+                html = '<p>' + escapeHtml(noResultsMsg) + '</p>';
             }
+            return html;
+        }
+
+        function displayResults(data, isComplete) {
+            blockSearchComplete = isComplete;
+            var className = $('#fbps-class-name').val();
+            var anchorName = $('#fbps-anchor-name').val();
+            var noResultsMsg = (className || anchorName) ? fbpsData.i18n.noAttributeResults : fbpsData.i18n.noBlockResults;
+            var html = buildResultsTableHtml(data, isComplete, noResultsMsg);
             $('#fbps-search-results').html(html).attr('tabindex', '-1').focus();
             initTableSort('#fbps-search-results');
         }
@@ -243,7 +297,16 @@
         }
 
         function searchBlock(block) {
-            currentSearch = block;
+            var className = $('#fbps-class-name').val().trim();
+            var anchorName = $('#fbps-anchor-name').val().trim();
+
+            // Require at least one search criterion
+            if (!block && !className && !anchorName) {
+                displayError(fbpsData.i18n.classOrAnchorRequired);
+                return;
+            }
+
+            currentSearch = block || className || anchorName;
             allResults = [];
             $('#fbps-export-button').hide();
             $('#fbps-search-button').prop('disabled', true).attr('aria-busy', 'true');
@@ -256,7 +319,7 @@
             updateProgress(0);
 
             ensureFreshNonce(function() {
-                searchBlockBatch(block, getSelectedPostTypes(), 0, []);
+                searchBlockBatch(block, getSelectedPostTypes(), 0, [], className, anchorName);
             });
         }
 
@@ -276,14 +339,37 @@
 
         // Unified CSV Export - detects which search type has results
         $('#fbps-export-button').on('click', function(){
-            var csv = 'Title,Type,Date,View Link\n';
+            var cols = getVisibleColumns();
+            var columnLabels = {
+                title: 'Title',
+                type: 'Type',
+                date: 'Date',
+                className: 'CSS Class',
+                anchor: 'HTML Anchor'
+            };
+
+            // Build CSV header from visible columns + View Link
+            var headerParts = [];
+            cols.forEach(function(col) {
+                headerParts.push(columnLabels[col] || col);
+            });
+            headerParts.push('View Link');
+            var csv = headerParts.join(',') + '\n';
+
             var filename = '';
             var results = [];
 
             // Determine which search has results and use appropriate data
             if (allResults.length > 0) {
                 results = allResults;
-                filename = 'block-usage-' + $('#fbps-block-name').val().replace(/[^a-z0-9]/gi, '-') + '.csv';
+                var blockVal = $('#fbps-block-name').val();
+                var classVal = $('#fbps-class-name').val();
+                var anchorVal = $('#fbps-anchor-name').val();
+                var nameParts = [];
+                if (blockVal) nameParts.push(blockVal);
+                if (classVal) nameParts.push('class-' + classVal);
+                if (anchorVal) nameParts.push('anchor-' + anchorVal);
+                filename = 'block-usage-' + (nameParts.join('-') || 'search').replace(/[^a-z0-9-]/gi, '-') + '.csv';
             } else if (allPatternResults.length > 0) {
                 results = allPatternResults;
                 var patternName = $('#fbps-pattern-dropdown option:selected').text().replace(/[^a-z0-9]/gi, '-');
@@ -294,12 +380,14 @@
                 filename = 'shortcode-usage-' + shortcodeName + '.csv';
             }
 
-            // Build CSV from results
+            // Build CSV from results using visible columns
             results.forEach(function(item){
-                csv += '"' + sanitizeCsvValue(item.title) + '",';
-                csv += '"' + sanitizeCsvValue(item.type) + '",';
-                csv += '"' + sanitizeCsvValue(item.date) + '",';
-                csv += '"' + sanitizeCsvValue(item.view_link) + '"\n';
+                var rowParts = [];
+                cols.forEach(function(col) {
+                    rowParts.push('"' + sanitizeCsvValue(item[col] || '') + '"');
+                });
+                rowParts.push('"' + sanitizeCsvValue(item.view_link) + '"');
+                csv += rowParts.join(',') + '\n';
             });
 
             // Download CSV
@@ -312,21 +400,13 @@
             window.URL.revokeObjectURL(url);
         });
 
-        // Add Enter key support
-        $('#fbps-block-name').on('keypress', function(e){
+        // Add Enter key support for all block search fields
+        $('#fbps-block-name, #fbps-class-name, #fbps-anchor-name').on('keypress', function(e){
             if (e.which === 13) { // Enter key
                 e.preventDefault();
                 clearTimeout(timer);
-                searchBlock( $(this).val() );
-            }
-        });
-
-        $('#fbps-block-name').on('keyup', function(e){
-            if (e.which === 13) return; // Skip Enter key for debounced search
-            clearTimeout(timer);
-            timer = setTimeout(function(){
                 searchBlock( $('#fbps-block-name').val() );
-            }, 500);
+            }
         });
 
         // ========== PATTERN SEARCH FUNCTIONS ==========
@@ -403,40 +483,8 @@
         }
 
         function displayPatternResults(data, isComplete) {
-            var html = '';
-            if (data.length) {
-                html += '<p class="fbps-results-count" aria-live="polite">';
-                html += data.length + ' ' + (data.length === 1 ? fbpsData.i18n.result : fbpsData.i18n.results);
-                if (!isComplete) {
-                    html += ' ' + fbpsData.i18n.foundSoFar;
-                } else {
-                    html += ' ' + fbpsData.i18n.found;
-                }
-                html += '</p>';
-                html += '<table class="wp-list-table widefat fixed striped fbps-results-table">';
-                html += '<thead><tr>';
-                html += '<th class="sortable" data-column="title"><a href="#"><span>' + escapeHtml(fbpsData.i18n.title) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th class="sortable" data-column="type"><a href="#"><span>' + escapeHtml(fbpsData.i18n.type) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th class="sortable sorted desc" data-column="date"><a href="#"><span>' + escapeHtml(fbpsData.i18n.date) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th>' + escapeHtml(fbpsData.i18n.actions) + '</th>';
-                html += '</tr></thead><tbody>';
-                data.forEach(function(item){
-                    if (item && item.edit_link && item.view_link && item.title && item.type && item.date) {
-                        html += '<tr data-title="'+ escapeHtml(item.title) +'" data-type="'+ escapeHtml(item.type) +'" data-date="'+ escapeHtml(item.date) +'">';
-                        html += '<td><strong>'+ escapeHtml(item.title) +'</strong></td>';
-                        html += '<td>'+ escapeHtml(item.type) +'</td>';
-                        html += '<td>'+ formatDate(item.date) +'</td>';
-                        html += '<td>';
-                        html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.view) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank">' + escapeHtml(fbpsData.i18n.view) + '</a> ';
-                        html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.edit) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'">' + escapeHtml(fbpsData.i18n.edit) + '</a>';
-                        html += '</td>';
-                        html += '</tr>';
-                    }
-                });
-                html += '</tbody></table>';
-            } else if (isComplete) {
-                html = '<p>' + escapeHtml(fbpsData.i18n.noPatternResults) + '</p>';
-            }
+            patternSearchComplete = isComplete;
+            var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noPatternResults);
             $('#fbps-pattern-search-results').html(html).attr('tabindex', '-1').focus();
             initTableSort('#fbps-pattern-search-results');
         }
@@ -561,40 +609,8 @@
         }
 
         function displayShortcodeResults(data, isComplete) {
-            var html = '';
-            if (data.length) {
-                html += '<p class="fbps-results-count" aria-live="polite">';
-                html += data.length + ' ' + (data.length === 1 ? fbpsData.i18n.result : fbpsData.i18n.results);
-                if (!isComplete) {
-                    html += ' ' + fbpsData.i18n.foundSoFar;
-                } else {
-                    html += ' ' + fbpsData.i18n.found;
-                }
-                html += '</p>';
-                html += '<table class="wp-list-table widefat fixed striped fbps-results-table">';
-                html += '<thead><tr>';
-                html += '<th class="sortable" data-column="title"><a href="#"><span>' + escapeHtml(fbpsData.i18n.title) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th class="sortable" data-column="type"><a href="#"><span>' + escapeHtml(fbpsData.i18n.type) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th class="sortable sorted desc" data-column="date"><a href="#"><span>' + escapeHtml(fbpsData.i18n.date) + '</span><span class="sorting-indicator"></span></a></th>';
-                html += '<th>' + escapeHtml(fbpsData.i18n.actions) + '</th>';
-                html += '</tr></thead><tbody>';
-                data.forEach(function(item){
-                    if (item && item.edit_link && item.view_link && item.title && item.type && item.date) {
-                        html += '<tr data-title="'+ escapeHtml(item.title) +'" data-type="'+ escapeHtml(item.type) +'" data-date="'+ escapeHtml(item.date) +'">';
-                        html += '<td><strong>'+ escapeHtml(item.title) +'</strong></td>';
-                        html += '<td>'+ escapeHtml(item.type) +'</td>';
-                        html += '<td>'+ formatDate(item.date) +'</td>';
-                        html += '<td>';
-                        html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.view) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank">' + escapeHtml(fbpsData.i18n.view) + '</a> ';
-                        html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.edit) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'">' + escapeHtml(fbpsData.i18n.edit) + '</a>';
-                        html += '</td>';
-                        html += '</tr>';
-                    }
-                });
-                html += '</tbody></table>';
-            } else if (isComplete) {
-                html = '<p>' + escapeHtml(fbpsData.i18n.noShortcodeResults) + '</p>';
-            }
+            shortcodeSearchComplete = isComplete;
+            var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noShortcodeResults);
             $('#fbps-shortcode-search-results').html(html).attr('tabindex', '-1').focus();
             initTableSort('#fbps-shortcode-search-results');
         }
@@ -643,6 +659,19 @@
             $('#fbps-shortcode-progress').hide();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
             $('#fbps-shortcode-search-results').html(html);
+        });
+
+        // Re-render results when column toggles change
+        $('.fbps-col-toggle').on('change', function() {
+            if (allResults.length > 0) {
+                displayResults(allResults, blockSearchComplete);
+            }
+            if (allPatternResults.length > 0) {
+                displayPatternResults(allPatternResults, patternSearchComplete);
+            }
+            if (allShortcodeResults.length > 0) {
+                displayShortcodeResults(allShortcodeResults, shortcodeSearchComplete);
+            }
         });
     });
 })(jQuery);

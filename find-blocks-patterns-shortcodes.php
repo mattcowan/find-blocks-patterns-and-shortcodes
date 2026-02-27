@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.0.1
+ * Version:     1.1.0
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.0.1' );
+define( 'FBPS_VERSION', '1.1.0' );
 
 /**
  * Plugin activation - register custom capability.
@@ -160,8 +160,12 @@ function fbps_enqueue_admin_assets( $hook ) {
 				'noBlockResults'        => __( 'No content found using that block.', 'find-blocks-patterns-shortcodes' ),
 				'noPatternResults'      => __( 'No content found using that synced pattern.', 'find-blocks-patterns-shortcodes' ),
 				'noShortcodeResults'    => __( 'No content found using that shortcode.', 'find-blocks-patterns-shortcodes' ),
-				'selectPattern'         => __( 'Please select a synced pattern', 'find-blocks-patterns-shortcodes' ),
-				'selectShortcode'       => __( 'Please select a shortcode', 'find-blocks-patterns-shortcodes' ),
+				'selectPattern'           => __( 'Please select a synced pattern', 'find-blocks-patterns-shortcodes' ),
+				'selectShortcode'         => __( 'Please select a shortcode', 'find-blocks-patterns-shortcodes' ),
+				'classOrAnchorRequired'   => __( 'Enter a block name, CSS class, or HTML anchor', 'find-blocks-patterns-shortcodes' ),
+				'noAttributeResults'      => __( 'No content found matching that class or anchor.', 'find-blocks-patterns-shortcodes' ),
+				'cssClass'                => __( 'CSS Class', 'find-blocks-patterns-shortcodes' ),
+				'htmlAnchor'              => __( 'HTML Anchor', 'find-blocks-patterns-shortcodes' ),
 			],
 		]
 	);
@@ -275,6 +279,33 @@ function fbps_validate_block_name( $block_name ) {
     foreach ( $blacklist as $pattern ) {
         if ( stripos( $block_name, $pattern ) !== false ) {
             return new WP_Error( 'dangerous_pattern', __( 'Invalid block name', 'find-blocks-patterns-shortcodes' ) );
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Validate a CSS class name or HTML anchor for attribute search.
+ *
+ * @param string $value The class name or anchor to validate.
+ * @return true|WP_Error True if valid, WP_Error otherwise.
+ */
+function fbps_validate_attribute_search( $value ) {
+    if ( strlen( $value ) > 100 ) {
+        return new WP_Error( 'invalid_length', __( 'Value too long', 'find-blocks-patterns-shortcodes' ) );
+    }
+
+    // Allow alphanumeric, hyphens, underscores (valid CSS class / HTML ID characters)
+    if ( ! preg_match( '/^[a-zA-Z0-9_-]+$/', $value ) ) {
+        return new WP_Error( 'invalid_format', __( 'Invalid format. Use only letters, numbers, hyphens, and underscores.', 'find-blocks-patterns-shortcodes' ) );
+    }
+
+    // Blacklist dangerous patterns
+    $blacklist = [ 'script', 'eval', 'javascript', 'vbscript', 'onload', 'onerror' ];
+    foreach ( $blacklist as $pattern ) {
+        if ( stripos( $value, $pattern ) !== false ) {
+            return new WP_Error( 'dangerous_pattern', __( 'Invalid value', 'find-blocks-patterns-shortcodes' ) );
         }
     }
 
@@ -710,38 +741,57 @@ function fbps_render_admin_page() {
     ?>
     <div class="wrap">
         <h1><?php esc_html_e( 'Find Blocks, Patterns & Shortcodes', 'find-blocks-patterns-shortcodes' ); ?></h1>
-        <div role="search" aria-label="<?php esc_attr_e( 'Search for block usage', 'find-blocks-patterns-shortcodes' ); ?>">
+        <div class="fbps-search-section" role="search" aria-label="<?php esc_attr_e( 'Search for block usage', 'find-blocks-patterns-shortcodes' ); ?>">
             <div class="fbps-search-field">
                 <label for="fbps-block-name"><?php esc_html_e( 'Block Name:', 'find-blocks-patterns-shortcodes' ); ?></label>
-                <input type="text" id="fbps-block-name" class="fbps-search-input" placeholder="<?php esc_attr_e( 'e.g. core/paragraph', 'find-blocks-patterns-shortcodes' ); ?>">
+                <div class="fbps-field-content">
+                    <input type="text" id="fbps-block-name" class="fbps-search-input" placeholder="<?php esc_attr_e( 'e.g. core/paragraph', 'find-blocks-patterns-shortcodes' ); ?>">
+                </div>
             </div>
             <div class="fbps-search-field">
-                <label for="fbps-block-dropdown"><?php esc_html_e( 'Or select from available blocks:', 'find-blocks-patterns-shortcodes' ); ?></label>
-                <select id="fbps-block-dropdown" class="fbps-block-dropdown">
-                    <option value=""><?php esc_html_e( '-- Select a block --', 'find-blocks-patterns-shortcodes' ); ?></option>
-                    <?php foreach ( $all_blocks as $block_name => $block_type ) : ?>
-                        <option value="<?php echo esc_attr( $block_name ); ?>">
-                            <?php
-                            // Show block title if available, otherwise use block name
-                            echo esc_html( isset( $block_type->title ) && ! empty( $block_type->title )
-                                ? $block_type->title . ' (' . $block_name . ')'
-                                : $block_name
-                            );
-                            ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
+                <label for="fbps-block-dropdown"><?php esc_html_e( 'Or select a block:', 'find-blocks-patterns-shortcodes' ); ?></label>
+                <div class="fbps-field-content">
+                    <select id="fbps-block-dropdown" class="fbps-block-dropdown">
+                        <option value=""><?php esc_html_e( '-- Select a block --', 'find-blocks-patterns-shortcodes' ); ?></option>
+                        <?php foreach ( $all_blocks as $block_name => $block_type ) : ?>
+                            <option value="<?php echo esc_attr( $block_name ); ?>">
+                                <?php
+                                // Show block title if available, otherwise use block name
+                                echo esc_html( isset( $block_type->title ) && ! empty( $block_type->title )
+                                    ? $block_type->title . ' (' . $block_name . ')'
+                                    : $block_name
+                                );
+                                ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="fbps-search-field">
+                <label for="fbps-class-name"><?php esc_html_e( 'CSS Class:', 'find-blocks-patterns-shortcodes' ); ?></label>
+                <div class="fbps-field-content">
+                    <input type="text" id="fbps-class-name" class="fbps-search-input" placeholder="<?php esc_attr_e( 'e.g. has-large-font-size', 'find-blocks-patterns-shortcodes' ); ?>">
+                </div>
+            </div>
+            <div class="fbps-search-field">
+                <label for="fbps-anchor-name"><?php esc_html_e( 'HTML Anchor:', 'find-blocks-patterns-shortcodes' ); ?></label>
+                <div class="fbps-field-content">
+                    <input type="text" id="fbps-anchor-name" class="fbps-search-input" placeholder="<?php esc_attr_e( 'e.g. my-section', 'find-blocks-patterns-shortcodes' ); ?>">
+                    <small class="description"><?php esc_html_e( 'Optional — search by class or anchor alone, or combine with a block name.', 'find-blocks-patterns-shortcodes' ); ?></small>
+                </div>
             </div>
             <div class="fbps-search-field">
                 <label for="fbps-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
-                <select id="fbps-post-types" class="fbps-post-types-select" multiple size="4">
-                    <?php foreach ( $post_types as $post_type ) : ?>
-                        <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
-                            <?php echo esc_html( $post_type->label ); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                <div class="fbps-field-content">
+                    <select id="fbps-post-types" class="fbps-post-types-select" multiple size="4">
+                        <?php foreach ( $post_types as $post_type ) : ?>
+                            <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
+                                <?php echo esc_html( $post_type->label ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                </div>
             </div>
             <div class="fbps-search-actions">
                 <button id="fbps-search-button" class="button button-primary"><?php esc_html_e( 'Search', 'find-blocks-patterns-shortcodes' ); ?></button>
@@ -751,31 +801,35 @@ function fbps_render_admin_page() {
         <div id="fbps-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
         <hr style="margin: 30px 0;">
         <h2><?php esc_html_e( 'Search for Synced Pattern Usage', 'find-blocks-patterns-shortcodes' ); ?></h2>
-        <div role="search" aria-label="<?php esc_attr_e( 'Search for synced pattern usage', 'find-blocks-patterns-shortcodes' ); ?>">
+        <div class="fbps-search-section" role="search" aria-label="<?php esc_attr_e( 'Search for synced pattern usage', 'find-blocks-patterns-shortcodes' ); ?>">
             <div class="fbps-search-field">
-                <label for="fbps-pattern-dropdown"><?php esc_html_e( 'Select a synced pattern:', 'find-blocks-patterns-shortcodes' ); ?></label>
-                <select id="fbps-pattern-dropdown" class="fbps-pattern-dropdown">
-                    <option value=""><?php esc_html_e( '-- Select a synced pattern --', 'find-blocks-patterns-shortcodes' ); ?></option>
-                    <?php foreach ( $synced_patterns as $pattern ) : ?>
-                        <option value="<?php echo esc_attr( $pattern->ID ); ?>">
-                            <?php echo esc_html( $pattern->post_title ? $pattern->post_title : __( '(no title)', 'find-blocks-patterns-shortcodes' ) ); ?>
-                        </option>
-                    <?php endforeach; ?>
-                    <?php if ( empty( $synced_patterns ) ) : ?>
-                        <option value="" disabled><?php esc_html_e( 'No synced patterns found', 'find-blocks-patterns-shortcodes' ); ?></option>
-                    <?php endif; ?>
-                </select>
+                <label for="fbps-pattern-dropdown"><?php esc_html_e( 'Synced Pattern:', 'find-blocks-patterns-shortcodes' ); ?></label>
+                <div class="fbps-field-content">
+                    <select id="fbps-pattern-dropdown" class="fbps-pattern-dropdown">
+                        <option value=""><?php esc_html_e( '-- Select a synced pattern --', 'find-blocks-patterns-shortcodes' ); ?></option>
+                        <?php foreach ( $synced_patterns as $pattern ) : ?>
+                            <option value="<?php echo esc_attr( $pattern->ID ); ?>">
+                                <?php echo esc_html( $pattern->post_title ? $pattern->post_title : __( '(no title)', 'find-blocks-patterns-shortcodes' ) ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                        <?php if ( empty( $synced_patterns ) ) : ?>
+                            <option value="" disabled><?php esc_html_e( 'No synced patterns found', 'find-blocks-patterns-shortcodes' ); ?></option>
+                        <?php endif; ?>
+                    </select>
+                </div>
             </div>
             <div class="fbps-search-field">
                 <label for="fbps-pattern-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
-                <select id="fbps-pattern-post-types" class="fbps-post-types-select" multiple size="4">
-                    <?php foreach ( $post_types as $post_type ) : ?>
-                        <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
-                            <?php echo esc_html( $post_type->label ); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                <div class="fbps-field-content">
+                    <select id="fbps-pattern-post-types" class="fbps-post-types-select" multiple size="4">
+                        <?php foreach ( $post_types as $post_type ) : ?>
+                            <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
+                                <?php echo esc_html( $post_type->label ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                </div>
             </div>
             <div class="fbps-search-actions">
                 <button id="fbps-pattern-search-button" class="button button-primary"><?php esc_html_e( 'Search Pattern', 'find-blocks-patterns-shortcodes' ); ?></button>
@@ -785,31 +839,35 @@ function fbps_render_admin_page() {
         <div id="fbps-pattern-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
         <hr style="margin: 30px 0;">
         <h2><?php esc_html_e( 'Search for Shortcode Usage', 'find-blocks-patterns-shortcodes' ); ?></h2>
-        <div role="search" aria-label="<?php esc_attr_e( 'Search for shortcode usage', 'find-blocks-patterns-shortcodes' ); ?>">
+        <div class="fbps-search-section" role="search" aria-label="<?php esc_attr_e( 'Search for shortcode usage', 'find-blocks-patterns-shortcodes' ); ?>">
             <div class="fbps-search-field">
-                <label for="fbps-shortcode-dropdown"><?php esc_html_e( 'Select a shortcode:', 'find-blocks-patterns-shortcodes' ); ?></label>
-                <select id="fbps-shortcode-dropdown" class="fbps-shortcode-dropdown">
-                    <option value=""><?php esc_html_e( '-- Select a shortcode --', 'find-blocks-patterns-shortcodes' ); ?></option>
-                    <?php foreach ( $all_shortcodes as $shortcode ) : ?>
-                        <option value="<?php echo esc_attr( $shortcode['tag'] ); ?>">
-                            <?php echo esc_html( $shortcode['tag'] ); ?>
-                        </option>
-                    <?php endforeach; ?>
-                    <?php if ( empty( $all_shortcodes ) ) : ?>
-                        <option value="" disabled><?php esc_html_e( 'No shortcodes found', 'find-blocks-patterns-shortcodes' ); ?></option>
-                    <?php endif; ?>
-                </select>
+                <label for="fbps-shortcode-dropdown"><?php esc_html_e( 'Shortcode:', 'find-blocks-patterns-shortcodes' ); ?></label>
+                <div class="fbps-field-content">
+                    <select id="fbps-shortcode-dropdown" class="fbps-shortcode-dropdown">
+                        <option value=""><?php esc_html_e( '-- Select a shortcode --', 'find-blocks-patterns-shortcodes' ); ?></option>
+                        <?php foreach ( $all_shortcodes as $shortcode ) : ?>
+                            <option value="<?php echo esc_attr( $shortcode['tag'] ); ?>">
+                                <?php echo esc_html( $shortcode['tag'] ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                        <?php if ( empty( $all_shortcodes ) ) : ?>
+                            <option value="" disabled><?php esc_html_e( 'No shortcodes found', 'find-blocks-patterns-shortcodes' ); ?></option>
+                        <?php endif; ?>
+                    </select>
+                </div>
             </div>
             <div class="fbps-search-field">
                 <label for="fbps-shortcode-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
-                <select id="fbps-shortcode-post-types" class="fbps-post-types-select" multiple size="4">
-                    <?php foreach ( $post_types as $post_type ) : ?>
-                        <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
-                            <?php echo esc_html( $post_type->label ); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                <div class="fbps-field-content">
+                    <select id="fbps-shortcode-post-types" class="fbps-post-types-select" multiple size="4">
+                        <?php foreach ( $post_types as $post_type ) : ?>
+                            <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
+                                <?php echo esc_html( $post_type->label ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                </div>
             </div>
             <div class="fbps-search-actions">
                 <button id="fbps-shortcode-search-button" class="button button-primary"><?php esc_html_e( 'Search Shortcode', 'find-blocks-patterns-shortcodes' ); ?></button>
@@ -822,6 +880,14 @@ function fbps_render_admin_page() {
             <h2 style="margin: 0;"><?php esc_html_e( 'Results', 'find-blocks-patterns-shortcodes' ); ?></h2>
             <button id="fbps-export-button" class="button" style="display:none;"><?php esc_html_e( 'Export CSV', 'find-blocks-patterns-shortcodes' ); ?></button>
         </div>
+        <fieldset class="fbps-column-toggles">
+            <legend><?php esc_html_e( 'Show columns:', 'find-blocks-patterns-shortcodes' ); ?></legend>
+            <label><input type="checkbox" class="fbps-col-toggle" value="title" checked> <?php esc_html_e( 'Title', 'find-blocks-patterns-shortcodes' ); ?></label>
+            <label><input type="checkbox" class="fbps-col-toggle" value="type" checked> <?php esc_html_e( 'Type', 'find-blocks-patterns-shortcodes' ); ?></label>
+            <label><input type="checkbox" class="fbps-col-toggle" value="date" checked> <?php esc_html_e( 'Date', 'find-blocks-patterns-shortcodes' ); ?></label>
+            <label><input type="checkbox" class="fbps-col-toggle" value="className"> <?php esc_html_e( 'CSS Class', 'find-blocks-patterns-shortcodes' ); ?></label>
+            <label><input type="checkbox" class="fbps-col-toggle" value="anchor"> <?php esc_html_e( 'HTML Anchor', 'find-blocks-patterns-shortcodes' ); ?></label>
+        </fieldset>
         <div id="fbps-shortcode-search-results"
              class="fbps-results-container"
              role="region"
@@ -884,6 +950,237 @@ function fbps_detect_block_variations( $block_name, $post ) {
 }
 
 /**
+ * Detect if a post contains a block with a specific CSS class or HTML anchor.
+ *
+ * Parses Gutenberg block comment delimiters to extract JSON attributes
+ * and checks for matching className or anchor values.
+ *
+ * @param WP_Post $post           The post to search.
+ * @param string  $class_name     CSS class to search for (empty to skip).
+ * @param string  $anchor_name    HTML anchor to search for (empty to skip).
+ * @param string  $block_name     Optional block name to filter by.
+ * @return bool True if a matching block is found.
+ */
+function fbps_detect_block_attribute( $post, $class_name = '', $anchor_name = '', $block_name = '' ) {
+    if ( empty( $class_name ) && empty( $anchor_name ) ) {
+        return false;
+    }
+
+    $content = $post->post_content;
+    if ( empty( $content ) ) {
+        return false;
+    }
+
+    // Match block comment delimiters with JSON attributes
+    // e.g. <!-- wp:paragraph {"className":"my-class","anchor":"my-id"} -->
+    if ( ! preg_match_all( '/<!--\s+wp:([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s+(\{.*?\})\s+-->/i', $content, $matches, PREG_SET_ORDER ) ) {
+        return false;
+    }
+
+    foreach ( $matches as $match ) {
+        $matched_block = $match[1];
+        $json_str      = $match[2];
+
+        // If filtering by block name, check it matches
+        if ( ! empty( $block_name ) && $matched_block !== $block_name ) {
+            continue;
+        }
+
+        $attrs = json_decode( $json_str, true );
+        if ( ! is_array( $attrs ) ) {
+            continue;
+        }
+
+        // Check className (space-separated list, match whole words)
+        if ( ! empty( $class_name ) && ! empty( $attrs['className'] ) ) {
+            $classes = explode( ' ', $attrs['className'] );
+            if ( in_array( $class_name, $classes, true ) ) {
+                if ( empty( $anchor_name ) ) {
+                    return true;
+                }
+                // If both class and anchor are specified, both must match on the same block
+                if ( ! empty( $attrs['anchor'] ) && $attrs['anchor'] === $anchor_name ) {
+                    return true;
+                }
+            }
+        }
+
+        // Check anchor (exact match)
+        if ( ! empty( $anchor_name ) && empty( $class_name ) ) {
+            if ( ! empty( $attrs['anchor'] ) && $attrs['anchor'] === $anchor_name ) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Extract actual className and anchor values from a post's matching blocks.
+ *
+ * Unlike fbps_detect_block_attribute() which returns a boolean, this function
+ * returns the actual attribute values for display in results tables.
+ *
+ * @param WP_Post $post        The post to extract from.
+ * @param string  $class_name  CSS class filter (empty to skip).
+ * @param string  $anchor_name HTML anchor filter (empty to skip).
+ * @param string  $block_name  Optional block name filter.
+ * @return array { className: string, anchor: string }
+ */
+function fbps_extract_block_attributes( $post, $class_name = '', $anchor_name = '', $block_name = '' ) {
+	$result = [ 'className' => '', 'anchor' => '' ];
+
+	$content = $post->post_content;
+	if ( empty( $content ) ) {
+		return $result;
+	}
+
+	if ( ! preg_match_all( '/<!--\s+wp:([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s+(\{.*?\})\s+-->/i', $content, $matches, PREG_SET_ORDER ) ) {
+		return $result;
+	}
+
+	$found_classes = [];
+	$found_anchors = [];
+
+	foreach ( $matches as $match ) {
+		$matched_block = $match[1];
+		$json_str      = $match[2];
+
+		// If filtering by block name, check it matches
+		if ( ! empty( $block_name ) && $matched_block !== $block_name ) {
+			continue;
+		}
+
+		$attrs = json_decode( $json_str, true );
+		if ( ! is_array( $attrs ) ) {
+			continue;
+		}
+
+		$class_match  = false;
+		$anchor_match = false;
+
+		// Check className
+		if ( ! empty( $attrs['className'] ) ) {
+			if ( ! empty( $class_name ) ) {
+				$classes = explode( ' ', $attrs['className'] );
+				if ( in_array( $class_name, $classes, true ) ) {
+					$class_match = true;
+				}
+			} else {
+				$class_match = true;
+			}
+		}
+
+		// Check anchor
+		if ( ! empty( $attrs['anchor'] ) ) {
+			if ( ! empty( $anchor_name ) ) {
+				if ( $attrs['anchor'] === $anchor_name ) {
+					$anchor_match = true;
+				}
+			} else {
+				$anchor_match = true;
+			}
+		}
+
+		// Apply same matching logic as fbps_detect_block_attribute
+		$is_match = false;
+		if ( ! empty( $class_name ) && ! empty( $anchor_name ) ) {
+			$is_match = $class_match && $anchor_match;
+		} elseif ( ! empty( $class_name ) ) {
+			$is_match = $class_match;
+		} elseif ( ! empty( $anchor_name ) ) {
+			$is_match = $anchor_match;
+		} else {
+			// No filter — collect all attributes from matching blocks
+			$is_match = true;
+		}
+
+		if ( $is_match ) {
+			if ( ! empty( $attrs['className'] ) ) {
+				foreach ( explode( ' ', $attrs['className'] ) as $cls ) {
+					$found_classes[ $cls ] = true;
+				}
+			}
+			if ( ! empty( $attrs['anchor'] ) ) {
+				$found_anchors[ $attrs['anchor'] ] = true;
+			}
+		}
+	}
+
+	$result['className'] = implode( ' ', array_keys( $found_classes ) );
+	$result['anchor']    = implode( ', ', array_keys( $found_anchors ) );
+
+	return $result;
+}
+
+/**
+ * Get posts containing blocks with a specific CSS class or HTML anchor.
+ *
+ * @param string $class_name   CSS class to search for.
+ * @param string $anchor_name  HTML anchor to search for.
+ * @param string $block_name   Optional block name to filter by.
+ * @param array  $post_types   Post types to search.
+ * @param int    $batch_offset Offset for batch processing.
+ * @param int    $batch_size   Number of posts per batch.
+ * @return array { posts: WP_Post[], has_more: bool, next_offset: int }
+ */
+function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $block_name = '', $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
+    $limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
+    $limit = min( $limit, 1000 );
+
+    if ( empty( $post_types ) ) {
+        $post_types = [ 'post', 'page' ];
+    } else {
+        $post_types = array_map( 'sanitize_key', (array) $post_types );
+    }
+
+    $ids = get_posts( [
+        'post_type'              => $post_types,
+        'posts_per_page'         => $batch_size,
+        'offset'                 => $batch_offset,
+        'post_status'            => 'any',
+        'fields'                 => 'ids',
+        'no_found_rows'          => true,
+        'update_post_meta_cache' => false,
+        'update_post_term_cache' => false,
+        'orderby'                => 'ID',
+        'order'                  => 'ASC',
+    ] );
+
+    $matches    = [];
+    $start_time = microtime( true );
+
+    foreach ( $ids as $post_id ) {
+        if ( microtime( true ) - $start_time > 25 ) {
+            fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
+            break;
+        }
+
+        $post_id = absint( $post_id );
+
+        $cache_key        = 'fbps_has_attr_' . md5( $class_name . '_' . $anchor_name . '_' . $block_name . '_' . $post_id );
+        $has_attr_cached  = wp_cache_get( $cache_key, 'find-blocks-patterns-shortcodes' );
+
+        if ( false === $has_attr_cached ) {
+            $post             = get_post( $post_id );
+            $has_attr_cached  = fbps_detect_block_attribute( $post, $class_name, $anchor_name, $block_name ) ? 'yes' : 'no';
+            wp_cache_set( $cache_key, $has_attr_cached, 'find-blocks-patterns-shortcodes', 300 );
+        }
+
+        if ( 'yes' === $has_attr_cached ) {
+            $matches[] = get_post( $post_id );
+        }
+    }
+
+    return [
+        'posts'       => $matches,
+        'has_more'    => count( $ids ) === $batch_size,
+        'next_offset' => $batch_offset + $batch_size,
+    ];
+}
+
+/**
  * AJAX handler for searching block usage.
  */
 add_action( 'wp_ajax_fbps_search_block', 'fbps_ajax_search_block' );
@@ -904,28 +1201,50 @@ function fbps_ajax_search_block() {
 
         // Proper input handling with wp_unslash()
         $block = isset( $_POST['block_name'] ) ? sanitize_text_field( wp_unslash( $_POST['block_name'] ) ) : '';
+        $class_name = isset( $_POST['class_name'] ) ? sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) : '';
+        $anchor_name = isset( $_POST['anchor_name'] ) ? sanitize_text_field( wp_unslash( $_POST['anchor_name'] ) ) : '';
         $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
         $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
 
-        if ( empty( $block ) ) {
+        $has_attribute_search = ! empty( $class_name ) || ! empty( $anchor_name );
+
+        if ( empty( $block ) && ! $has_attribute_search ) {
             throw new Exception( 'empty_input' );
         }
 
-        // Enhanced validation with namespace checking
-        $validation = fbps_validate_block_name( $block );
-        if ( is_wp_error( $validation ) ) {
-            fbps_log_security_event( 'invalid_input', [
-                'block_name' => $block,
-                'error' => $validation->get_error_message()
-            ] );
-            throw new Exception( 'invalid_input' );
+        // Validate block name if provided
+        if ( ! empty( $block ) ) {
+            $validation = fbps_validate_block_name( $block );
+            if ( is_wp_error( $validation ) ) {
+                fbps_log_security_event( 'invalid_input', [
+                    'block_name' => $block,
+                    'error' => $validation->get_error_message()
+                ] );
+                throw new Exception( 'invalid_input' );
+            }
+
+            $namespace_check = fbps_validate_block_namespace( $block );
+            if ( is_wp_error( $namespace_check ) ) {
+                fbps_log_security_event( 'suspicious_namespace', [ 'block_name' => $block ] );
+            }
         }
 
-        // Validate block namespace against registered blocks
-        $namespace_check = fbps_validate_block_namespace( $block );
-        if ( is_wp_error( $namespace_check ) ) {
-            fbps_log_security_event( 'suspicious_namespace', [ 'block_name' => $block ] );
-            // Continue anyway but log the event
+        // Validate class name if provided
+        if ( ! empty( $class_name ) ) {
+            $class_validation = fbps_validate_attribute_search( $class_name );
+            if ( is_wp_error( $class_validation ) ) {
+                fbps_log_security_event( 'invalid_input', [ 'class_name' => $class_name ] );
+                throw new Exception( 'invalid_class' );
+            }
+        }
+
+        // Validate anchor name if provided
+        if ( ! empty( $anchor_name ) ) {
+            $anchor_validation = fbps_validate_attribute_search( $anchor_name );
+            if ( is_wp_error( $anchor_validation ) ) {
+                fbps_log_security_event( 'invalid_input', [ 'anchor_name' => $anchor_name ] );
+                throw new Exception( 'invalid_anchor' );
+            }
         }
 
         // Get total count on first request for accurate progress
@@ -934,12 +1253,20 @@ function fbps_ajax_search_block() {
             $total_posts = fbps_get_total_posts_count( $post_types );
         }
 
-        $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, 100 );
+        // Use attribute search when class/anchor is provided, otherwise standard block search
+        if ( $has_attribute_search ) {
+            $search_result = fbps_get_posts_with_attribute( $class_name, $anchor_name, $block, $post_types, $batch_offset, 100 );
+        } else {
+            $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, 100 );
+        }
         $results = [];
 
         foreach ( $search_result['posts'] as $post ) {
             // Get the post date (use modified if available, otherwise published)
             $post_date = ! empty( $post->post_modified ) ? $post->post_modified : $post->post_date;
+
+            // Extract block attributes for display columns
+            $attrs = fbps_extract_block_attributes( $post, $class_name, $anchor_name, $block );
 
             $results[] = [
                 'id'        => absint( $post->ID ),
@@ -948,6 +1275,8 @@ function fbps_ajax_search_block() {
                 'view_link' => esc_url( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
                 'date'      => $post_date,
+                'className' => $attrs['className'],
+                'anchor'    => $attrs['anchor'],
             ];
         }
 
@@ -975,10 +1304,12 @@ function fbps_ajax_search_block() {
     } catch ( Exception $e ) {
         // Generic error messages to prevent information disclosure
         $error_messages = [
-            'unauthorized'  => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
-            'rate_limit'    => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
-            'empty_input'   => __( 'Block name is required', 'find-blocks-patterns-shortcodes' ),
-            'invalid_input' => __( 'Invalid block name format. Use: namespace/block-name', 'find-blocks-patterns-shortcodes' ),
+            'unauthorized'   => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
+            'rate_limit'     => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
+            'empty_input'    => __( 'Enter a block name, CSS class, or HTML anchor', 'find-blocks-patterns-shortcodes' ),
+            'invalid_input'  => __( 'Invalid block name format. Use: namespace/block-name', 'find-blocks-patterns-shortcodes' ),
+            'invalid_class'  => __( 'Invalid CSS class format. Use only letters, numbers, hyphens, and underscores.', 'find-blocks-patterns-shortcodes' ),
+            'invalid_anchor' => __( 'Invalid anchor format. Use only letters, numbers, hyphens, and underscores.', 'find-blocks-patterns-shortcodes' ),
         ];
 
         $message = isset( $error_messages[ $e->getMessage() ] ) ? $error_messages[ $e->getMessage() ] : __( 'An error occurred', 'find-blocks-patterns-shortcodes' );
@@ -1125,7 +1456,7 @@ function fbps_ajax_search_shortcode() {
 		}
 
 	// Get total count on first request for accurate progress
-    $total_posts = 0;
+	$total_posts = 0;
 		if ( $batch_offset === 0 ) {
 			$total_posts = fbps_get_total_posts_count( $post_types );
 		}

@@ -3,8 +3,51 @@
  * Loaded only on the plugin's admin page
  */
 
+.fbps-search-section {
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.fbps-search-section > h2 {
+    margin-top: 20px;
+}
+
+.wrap > h1 {
+    margin-bottom: 20px;
+}
+
 .fbps-search-field {
-    margin-bottom: 15px;
+    display: flex;
+    align-items: flex-start;
+    padding: 12px 16px;
+    margin-bottom: 0;
+}
+
+.fbps-search-field:nth-child(odd) {
+    background: #f6f7f7;
+}
+
+.fbps-search-field:nth-child(even) {
+    background: #fff;
+}
+
+.fbps-search-field label {
+    min-width: 200px;
+    flex-shrink: 0;
+    padding-top: 6px;
+    font-weight: 500;
+}
+
+.fbps-search-field .fbps-field-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.fbps-search-field .description {
+    display: block;
+    margin-top: 4px;
 }
 
 .fbps-search-input,
@@ -21,7 +64,9 @@
 }
 
 .fbps-search-actions {
-    margin-top: 10px;
+    padding: 12px 16px;
+    background: #f0f0f1;
+    border-top: 1px solid #c3c4c7;
 }
 
 .fbps-results-container {
@@ -29,6 +74,8 @@
 }
 
 .fbps-search-input:focus,
+#fbps-class-name:focus,
+#fbps-anchor-name:focus,
 .fbps-block-dropdown:focus,
 .fbps-pattern-dropdown:focus,
 .fbps-shortcode-dropdown:focus,
@@ -91,6 +138,27 @@
     vertical-align: middle;
 }
 
+.fbps-column-toggles {
+    margin-bottom: 15px;
+    border: none;
+    padding: 0;
+}
+
+.fbps-column-toggles legend {
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+
+.fbps-column-toggles label {
+    margin-right: 15px;
+    cursor: pointer;
+    display: inline-block;
+}
+
+.fbps-column-toggles input[type="checkbox"] {
+    margin-right: 4px;
+}
+
 .fbps-results-table th.sortable {
     cursor: pointer;
 }
@@ -98,30 +166,37 @@
 .fbps-results-table th.sortable a {
     text-decoration: none;
     color: inherit;
-    display: block;
+    display: flex;
+    align-items: center;
+}
+
+.fbps-results-table th.sortable:hover {
+    background: #f0f0f1;
 }
 
 .fbps-results-table th.sortable .sorting-indicator {
-    width: 10px;
-    height: 4px;
-    margin: 0 0 0 7px;
+    margin-left: 12px;
     display: inline-block;
     vertical-align: middle;
+    font-size: 0;
+    line-height: 1;
 }
 
-.fbps-results-table th.sortable.sorted .sorting-indicator:before {
-    content: "";
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    display: inline-block;
+.fbps-results-table th.sortable .sorting-indicator:before {
+    content: "\25B2\25BC";
+    font-size: 10px;
+    color: #c3c4c7;
+    letter-spacing: -3px;
 }
 
 .fbps-results-table th.sortable.sorted.asc .sorting-indicator:before {
-    border-bottom: 4px solid #444;
+    content: "\25B2";
+    color: #2c3338;
+    letter-spacing: normal;
 }
 
 .fbps-results-table th.sortable.sorted.desc .sorting-indicator:before {
-    border-top: 4px solid #444;
+    content: "\25BC";
+    color: #2c3338;
+    letter-spacing: normal;
 }
