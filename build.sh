@@ -27,9 +27,9 @@ mkdir -p "$RELEASE_DIR"
 echo "📋 Copying plugin files..."
 cp find-blocks-patterns-shortcodes.php "$RELEASE_DIR/"
 cp readme.txt "$RELEASE_DIR/"
-cp README.md "$RELEASE_DIR/"
-cp LICENSE "$RELEASE_DIR/"
-cp CHANGELOG.md "$RELEASE_DIR/"
+cp -r assets "$RELEASE_DIR/assets"
+[ -f README.md ] && cp README.md "$RELEASE_DIR/"
+[ -f LICENSE ] && cp LICENSE "$RELEASE_DIR/"
 
 # Create zip file
 echo "📦 Creating release zip..."
