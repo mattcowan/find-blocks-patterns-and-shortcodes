@@ -266,7 +266,7 @@
                         });
                         html += '<td>';
                         html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.view) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank">' + escapeHtml(fbpsData.i18n.view) + '</a> ';
-                        html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.edit) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'">' + escapeHtml(fbpsData.i18n.edit) + '</a>';
+                        html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.edit) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank">' + escapeHtml(fbpsData.i18n.edit) + '</a>';
                         html += '</td>';
                         html += '</tr>';
                     }
