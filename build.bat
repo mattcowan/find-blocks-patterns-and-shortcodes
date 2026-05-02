@@ -9,7 +9,11 @@ set BUILD_DIR=build
 set RELEASE_DIR=%BUILD_DIR%\%PLUGIN_SLUG%
 
 REM Extract version from plugin file
-for /f "tokens=2" %%a in ('findstr /C:"Version:" find-blocks-patterns-shortcodes.php') do set PLUGIN_VERSION=%%a
+REM Plugin header line format: " * Version:     X.Y.Z" — tokens split on whitespace
+REM yield: %%a=* %%b=Version: %%c=X.Y.Z. Stop after the first match.
+for /f "tokens=3" %%a in ('findstr /R /C:"^ \* Version: " find-blocks-patterns-shortcodes.php') do (
+    if not defined PLUGIN_VERSION set PLUGIN_VERSION=%%a
+)
 set ZIP_FILE=%PLUGIN_SLUG%.zip
 
 echo.
@@ -32,13 +36,28 @@ REM Copy plugin files
 echo Copying plugin files...
 copy find-blocks-patterns-shortcodes.php "%RELEASE_DIR%\" > nul
 copy readme.txt "%RELEASE_DIR%\" > nul
-copy README.md "%RELEASE_DIR%\" > nul
-copy LICENSE "%RELEASE_DIR%\" > nul
-copy CHANGELOG.md "%RELEASE_DIR%\" > nul
+xcopy assets "%RELEASE_DIR%\assets" /E /I /Q > nul
+if exist README.md copy README.md "%RELEASE_DIR%\" > nul
+if exist LICENSE copy LICENSE "%RELEASE_DIR%\" > nul
 
 REM Create zip file using PowerShell
+REM Note: Compress-Archive writes backslash paths which break WordPress's unzipper.
+REM Build entries manually with forward-slash paths via ZipArchive API.
 echo Creating release zip...
-powershell -command "Compress-Archive -Path '%RELEASE_DIR%' -DestinationPath '%ZIP_FILE%' -Force"
+powershell -NoProfile -Command ^
+  "if (Test-Path '%ZIP_FILE%') { Remove-Item '%ZIP_FILE%' -Force };" ^
+  "Add-Type -AssemblyName System.IO.Compression;" ^
+  "Add-Type -AssemblyName System.IO.Compression.FileSystem;" ^
+  "$src = (Resolve-Path '%BUILD_DIR%').Path;" ^
+  "$zs = [System.IO.File]::Open((Join-Path (Get-Location).Path '%ZIP_FILE%'), [System.IO.FileMode]::Create);" ^
+  "$a = New-Object System.IO.Compression.ZipArchive($zs, [System.IO.Compression.ZipArchiveMode]::Create);" ^
+  "try { Get-ChildItem -Path $src -Recurse -File | ForEach-Object {" ^
+  "  $rel = $_.FullName.Substring($src.Length + 1).Replace('\','/');" ^
+  "  $e = $a.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal);" ^
+  "  $es = $e.Open();" ^
+  "  try { $fs = [System.IO.File]::OpenRead($_.FullName); try { $fs.CopyTo($es) } finally { $fs.Dispose() } }" ^
+  "  finally { $es.Dispose() }" ^
+  "} } finally { $a.Dispose(); $zs.Dispose() }"
 
 REM Get file size
 for %%A in ("%ZIP_FILE%") do set FILE_SIZE=%%~zA

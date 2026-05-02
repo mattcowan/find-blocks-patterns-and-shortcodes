@@ -2,9 +2,9 @@
 Contributors: matthewneilcowan
 Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
-Tested up to: 6.9
+Tested up to: 6.9.4
 Requires PHP: 7.0
-Stable tag: 1.1.0
+Stable tag: 1.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -95,6 +95,13 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 2. Search results table with sortable columns and export csv button
 
 == Changelog ==
+
+= 1.1.2 =
+* Added `rel="noopener noreferrer"` to the View and Edit result links to harden against reverse-tabnabbing
+
+= 1.1.1 =
+* Fixed Edit links in search results not opening the post editor (URLs were double-HTML-encoded, leaving a literal `&#038;` in the query string so `action=edit` was never parsed)
+* Edit links now open in a new tab, matching the View link behavior, so search results are preserved
 
 = 1.1.0 =
 * Added CSS class and HTML anchor search for block attributes

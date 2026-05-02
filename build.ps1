@@ -43,11 +43,35 @@ if (Test-Path "README.md") { Copy-Item "README.md" -Destination $RELEASE_DIR }
 if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $RELEASE_DIR }
 
 # Create zip file
+# Note: Compress-Archive and ZipFile.CreateFromDirectory on Windows PowerShell 5.x
+# write backslash paths which violate the ZIP spec and break WordPress's unzipper.
+# Build entries manually with forward-slash paths.
 Write-Host "Creating release zip..." -ForegroundColor Green
 if (Test-Path $ZIP_FILE) {
     Remove-Item $ZIP_FILE -Force
 }
-Compress-Archive -Path $RELEASE_DIR -DestinationPath $ZIP_FILE -CompressionLevel Optimal
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$absoluteBuildDir = (Resolve-Path $BUILD_DIR).Path
+$absoluteZipPath = Join-Path (Get-Location).Path $ZIP_FILE
+
+$zipStream = [System.IO.File]::Open($absoluteZipPath, [System.IO.FileMode]::Create)
+$archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+    Get-ChildItem -Path $absoluteBuildDir -Recurse -File | ForEach-Object {
+        $relativePath = $_.FullName.Substring($absoluteBuildDir.Length + 1).Replace('\', '/')
+        $entry = $archive.CreateEntry($relativePath, [System.IO.Compression.CompressionLevel]::Optimal)
+        $entryStream = $entry.Open()
+        try {
+            $fileStream = [System.IO.File]::OpenRead($_.FullName)
+            try { $fileStream.CopyTo($entryStream) } finally { $fileStream.Dispose() }
+        } finally { $entryStream.Dispose() }
+    }
+} finally {
+    $archive.Dispose()
+    $zipStream.Dispose()
+}
 
 # Calculate file size
 $fileSize = (Get-Item $ZIP_FILE).Length

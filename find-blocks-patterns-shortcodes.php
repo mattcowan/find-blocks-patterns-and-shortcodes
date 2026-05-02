@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.1.0
+ * Version:     1.1.2
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.1.0' );
+define( 'FBPS_VERSION', '1.1.2' );
 
 /**
  * Plugin activation - register custom capability.
@@ -1271,8 +1271,8 @@ function fbps_ajax_search_block() {
             $results[] = [
                 'id'        => absint( $post->ID ),
                 'title'     => get_the_title( $post ),
-                'edit_link' => esc_url( get_edit_post_link( $post ) ),
-                'view_link' => esc_url( get_permalink( $post ) ),
+                'edit_link' => esc_url_raw( get_edit_post_link( $post, 'raw' ) ),
+                'view_link' => esc_url_raw( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
                 'date'      => $post_date,
                 'className' => $attrs['className'],
@@ -1368,8 +1368,8 @@ function fbps_ajax_search_pattern() {
             $results[] = [
                 'id'        => absint( $post->ID ),
                 'title'     => get_the_title( $post ),
-                'edit_link' => esc_url( get_edit_post_link( $post ) ),
-                'view_link' => esc_url( get_permalink( $post ) ),
+                'edit_link' => esc_url_raw( get_edit_post_link( $post, 'raw' ) ),
+                'view_link' => esc_url_raw( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
                 'date'      => $post_date,
             ];
@@ -1472,8 +1472,8 @@ function fbps_ajax_search_shortcode() {
 			$results[] = [
 				'id'        => absint( $post->ID ),
 				'title'     => get_the_title( $post ),
-				'edit_link' => esc_url( get_edit_post_link( $post ) ),
-				'view_link' => esc_url( get_permalink( $post ) ),
+				'edit_link' => esc_url_raw( get_edit_post_link( $post, 'raw' ) ),
+				'view_link' => esc_url_raw( get_permalink( $post ) ),
 				'type'      => sanitize_key( $post->post_type ),
 				'date'      => $post_date,
 			];
