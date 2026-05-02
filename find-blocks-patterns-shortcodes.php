@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.1.1
+ * Version:     1.1.2
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.1.1' );
+define( 'FBPS_VERSION', '1.1.2' );
 
 /**
  * Plugin activation - register custom capability.
