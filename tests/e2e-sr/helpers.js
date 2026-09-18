@@ -16,14 +16,23 @@ const ADMIN_PATH = '/wp-admin/tools.php?page=find-blocks-patterns-shortcodes';
 /**
  * The page title regex used to confirm the browser is really in front.
  *
- * Deliberately specific: a loose /find blocks/i would also match an editor
- * window that happens to have this file open, and every NVDA keystroke would
- * then go into the editor instead of the browser. This phrase only appears in
- * the WordPress admin title bar for this screen.
+ * Matched against the window title as NVDA SPEAKS it, which is not the literal
+ * document title. On this page NVDA says:
+ *
+ *   "Find Blocks, Patterns and Shortcodes < Typography Stylist - Word Press - Nightly"
+ *
+ * Two transformations to allow for: "&" is spoken as "and", and NVDA splits
+ * camel case, so "WordPress" comes through as "Word Press". Guidepup also
+ * appends "- Nightly" because Playwright's Firefox build is named that.
+ *
+ * Still deliberately specific. A loose /find blocks/i would also match an
+ * editor window with this plugin's folder open ("find-blocks-patterns-and-
+ * shortcodes - C: wamp 64 www ..."), and every NVDA keystroke would then be
+ * typed into the editor. Requiring the comma, the spaced words and the site
+ * name keeps it to the browser.
  */
-const TITLE = /Find Blocks, Patterns & Shortcodes .* WordPress/i;
+const TITLE = /Find Blocks, Patterns (?:&|and) Shortcodes.*Typography Stylist/i;
 
-/** Selectors for the three search surfaces, kept in one place. */
 const SURFACES = {
   block: {
     form: '.fbps-search-section[aria-label*="block usage"]',

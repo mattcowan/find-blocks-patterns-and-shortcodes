@@ -77,6 +77,28 @@
             return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
         }
 
+        /**
+         * Reset every results surface: the three accumulator arrays and the
+         * three containers.
+         *
+         * These must move together. The Export CSV handler picks the first
+         * non-empty array (block, then pattern, then shortcode), so leaving a
+         * previous search's array populated makes the button export stale data
+         * that is no longer on screen - a block search followed by a pattern
+         * search would export the block results.
+         */
+        function clearAllResults() {
+            allResults = [];
+            allPatternResults = [];
+            allShortcodeResults = [];
+            resetSort('block');
+            resetSort('pattern');
+            resetSort('shortcode');
+            syncResultsRegion($('#fbps-search-results').empty());
+            syncResultsRegion($('#fbps-pattern-search-results').empty());
+            syncResultsRegion($('#fbps-shortcode-search-results').empty());
+        }
+
         // Toggle the landmark role on a results container.
         //
         // All three containers exist from first paint, so leaving role="region"
@@ -108,6 +130,103 @@
             return value;
         }
 
+        /**
+         * Put focus back on a search button that lost it by being disabled.
+         *
+         * Disabling the element that currently has focus drops focus to <body>,
+         * which sends a keyboard user back to the top of the document. Since the
+         * results no longer take focus, this is the only thing keeping the user
+         * where they were.
+         *
+         * Only restores when focus actually fell to body or was lost entirely -
+         * if the user moved somewhere else while the search ran, leave them.
+         */
+        function restoreFocusIfLost($button) {
+            var active = document.activeElement;
+            if (!active || active === document.body || active === document.documentElement) {
+                $button.trigger('focus');
+            }
+        }
+
+        /** The block search has two "nothing found" messages depending on the fields used. */
+        function currentNoBlockResultsMsg() {
+            var className = $('#fbps-class-name').val();
+            var anchorName = $('#fbps-anchor-name').val();
+            return (className || anchorName) ? fbpsData.i18n.noAttributeResults : fbpsData.i18n.noBlockResults;
+        }
+
+        /**
+         * Announce that a search finished.
+         *
+         * The results containers are deliberately not live regions: when they
+         * were, aria-atomic made NVDA read the whole table on every change.
+         * The progress region is small, has role="status", and exists from page
+         * load, which is what makes it announce reliably - a live region that
+         * arrives together with its own content does not.
+         *
+         * The text is screen-reader only. The visible count already sits above
+         * the table, so showing it twice would just be noise.
+         */
+        function announceSearchComplete($progress, count, noResultsMsg) {
+            var msg = count
+                ? count + ' ' + (count === 1 ? fbpsData.i18n.result : fbpsData.i18n.results) + ' ' + fbpsData.i18n.found
+                : noResultsMsg;
+            $progress
+                .addClass('fbps-progress-done')
+                .html('<span class="screen-reader-text">' + escapeHtml(msg) + '</span>');
+        }
+
+        /**
+         * The current sort for each search surface.
+         *
+         * Sorting is applied to the accumulated ARRAY, never to the rendered
+         * rows, so the table and the CSV export can never disagree about
+         * order. Every surface starts newest-first by the Modified column; a
+         * new search resets it; clicking a header changes it and re-renders.
+         */
+        var sortState = {
+            block:     { col: 'date', dir: 'desc' },
+            pattern:   { col: 'date', dir: 'desc' },
+            shortcode: { col: 'date', dir: 'desc' }
+        };
+
+        function resetSort(surface) {
+            sortState[surface] = { col: 'date', dir: 'desc' };
+        }
+
+        /**
+         * Return a copy of items ordered by the given column and direction.
+         *
+         * Dates compare as timestamps; everything else compares as
+         * case-insensitive text. Rows whose date does not parse sink to the
+         * bottom in either direction rather than landing somewhere arbitrary.
+         */
+        function sortResults(items, col, dir) {
+            var sign = (dir === 'asc') ? 1 : -1;
+            return items.slice().sort(function(a, b) {
+                var av, bv;
+                if (col === 'date') {
+                    av = new Date(a && a.date).getTime();
+                    bv = new Date(b && b.date).getTime();
+                    if (isNaN(av) && isNaN(bv)) return 0;
+                    if (isNaN(av)) return 1;
+                    if (isNaN(bv)) return -1;
+                    return (av - bv) * sign;
+                }
+                av = String((a && a[col]) || '').toLowerCase();
+                bv = String((b && b[col]) || '').toLowerCase();
+                if (av < bv) return -1 * sign;
+                if (av > bv) return 1 * sign;
+                return 0;
+            });
+        }
+
+        /** Sort by the surface's current sort state. */
+        function applySort(surface, items) {
+            var st = sortState[surface];
+            return sortResults(items, st.col, st.dir);
+        }
+
         // Format date to match WordPress admin style
         function formatDate(dateString) {
             var date = new Date(dateString);
@@ -121,49 +240,32 @@
             return month + ' ' + day + ', ' + year;
         }
 
-        // Initialize table sorting
-        function initTableSort(containerSelector) {
+        /**
+         * Bind the column-header sort buttons of one surface.
+         *
+         * A click changes that surface's sort state, re-sorts the underlying
+         * array and re-renders the table from it - it does not shuffle DOM rows.
+         * That is what keeps the CSV export in the same order as the screen.
+         *
+         * Re-rendering destroys the button the user just pressed, so focus is
+         * put back on the same column's new button; otherwise it would fall to
+         * <body> and a keyboard user would be sent to the top of the page.
+         */
+        function initTableSort(containerSelector, surface) {
             $(containerSelector + ' .fbps-results-table th.sortable .fbps-sort-button').off('click').on('click', function(e){
                 e.preventDefault();
-                var $th = $(this).closest('th');
-                var column = $th.data('column');
-                var $table = $th.closest('table');
-                var isAsc = $th.hasClass('sorted') && $th.hasClass('asc');
-
-                // Remove sorted state from all headers
-                $table.find('th').removeClass('sorted asc desc');
-                $table.find('th.sortable').attr('aria-sort', 'none');
-
-                // Add sorted state to current header
-                var newDir = isAsc ? 'desc' : 'asc';
-                $th.addClass('sorted').addClass(newDir);
-                $th.attr('aria-sort', newDir === 'asc' ? 'ascending' : 'descending');
-
-                // Sort the rows
-                var dataKey = column.toLowerCase();
-                var $rows = $table.find('tbody tr').get();
-                $rows.sort(function(a, b){
-                    var aVal = $(a).data(dataKey);
-                    var bVal = $(b).data(dataKey);
-
-                    // Handle date sorting
-                    if (column === 'date') {
-                        aVal = new Date(aVal).getTime();
-                        bVal = new Date(bVal).getTime();
-                    } else {
-                        // Case-insensitive string sorting
-                        aVal = String(aVal).toLowerCase();
-                        bVal = String(bVal).toLowerCase();
-                    }
-
-                    if (aVal < bVal) return isAsc ? 1 : -1;
-                    if (aVal > bVal) return isAsc ? -1 : 1;
-                    return 0;
-                });
-
-                $.each($rows, function(index, row){
-                    $table.find('tbody').append(row);
-                });
+                var column = $(this).closest('th').data('column');
+                var st = sortState[surface];
+                if (st.col === column) {
+                    st.dir = (st.dir === 'asc') ? 'desc' : 'asc';
+                } else {
+                    st.col = column;
+                    st.dir = 'asc';
+                }
+                var r = surfaces[surface];
+                r.set(applySort(surface, r.get()));
+                r.display(r.get(), r.complete());
+                $(containerSelector + ' th[data-column="' + column + '"] .fbps-sort-button').trigger('focus');
             });
         }
 
@@ -208,7 +310,7 @@
                     return;
                 }
 
-                accumulated = accumulated.concat(data.results);
+                accumulated = applySort('block', accumulated.concat(data.results));
                 allResults = accumulated;
 
                 // Store total_posts from first batch
@@ -227,8 +329,9 @@
                     searchBlockBatch(block, postTypes, data.next_offset, accumulated, className, anchorName);
                 } else {
                     $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-search-button'));
                     $('#fbps-cancel-button').hide();
-                    $('#fbps-progress').hide();
+                    announceSearchComplete($('#fbps-progress'), accumulated.length, currentNoBlockResultsMsg());
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
                     }
@@ -246,11 +349,15 @@
             $('#fbps-progress').html(html);
         }
 
-        function buildResultsTableHtml(data, isComplete, noResultsMsg) {
+        function buildResultsTableHtml(data, isComplete, noResultsMsg, surface) {
+            var st = sortState[surface] || sortState.block;
             var html = '';
             var cols = getVisibleColumns();
             if (data.length) {
-                html += '<p class="fbps-results-count" aria-live="polite">';
+                                // Not a live region: it is injected with the table, and a live
+                // region that arrives with its own content does not announce.
+                // announceSearchComplete() carries the announcement instead.
+                html += '<p class="fbps-results-count">';
                 html += data.length + ' ' + (data.length === 1 ? fbpsData.i18n.result : fbpsData.i18n.results);
                 if (!isComplete) {
                     html += ' ' + fbpsData.i18n.foundSoFar;
@@ -263,11 +370,12 @@
                 cols.forEach(function(col) {
                     var def = columnDefs[col];
                     if (def) {
-                        var isDefaultSort = (col === 'date');
-                        var sortedClass = isDefaultSort ? ' sorted desc' : '';
-                        // aria-sort carries the sort state for assistive tech; the CSS
-                        // class and the arrow glyph convey it to sighted users only.
-                        var ariaSort = isDefaultSort ? 'descending' : 'none';
+                        // The header states the sort that applySort() actually put on
+                        // the data. It was a false statement to a screen reader when
+                        // the rows were still in post-ID order.
+                        var isSorted = (col === st.col);
+                        var sortedClass = isSorted ? ' sorted ' + st.dir : '';
+                        var ariaSort = isSorted ? (st.dir === 'asc' ? 'ascending' : 'descending') : 'none';
                         html += '<th scope="col" aria-sort="' + ariaSort + '" class="sortable' + sortedClass + '" data-column="' + col + '">' +
                                 '<button type="button" class="fbps-sort-button">' +
                                 '<span>' + escapeHtml(fbpsData.i18n[def.label]) + '</span>' +
@@ -297,7 +405,9 @@
                             if (col === 'title') {
                                 html += '<td><strong>' + escapeHtml(displayTitle) + '</strong></td>';
                             } else if (col === 'date') {
-                                html += '<td>' + escapeHtml(formatDate(val)) + '</td>';
+                                // date_display is formatted server-side with the site's
+                                // date format and locale. formatDate() is the fallback only.
+                                html += '<td>' + escapeHtml(item.date_display || formatDate(val)) + '</td>';
                             } else {
                                 html += '<td>' + escapeHtml(val) + '</td>';
                             }
@@ -320,20 +430,18 @@
             return html;
         }
 
-        function displayResults(data, isComplete, moveFocus) {
+        function displayResults(data, isComplete) {
             blockSearchComplete = isComplete;
             var className = $('#fbps-class-name').val();
             var anchorName = $('#fbps-anchor-name').val();
             var noResultsMsg = (className || anchorName) ? fbpsData.i18n.noAttributeResults : fbpsData.i18n.noBlockResults;
-            var html = buildResultsTableHtml(data, isComplete, noResultsMsg);
-            var $c = syncResultsRegion($('#fbps-search-results').html(html).attr('tabindex', '-1'));
-            // Only pull focus when a search produced this render. Re-rendering
-            // from a column toggle must leave focus on the checkbox the user
-            // just operated, or they are ejected from the fieldset each time.
-            if (moveFocus !== false) {
-                $c.focus();
-            }
-            initTableSort('#fbps-search-results');
+            var html = buildResultsTableHtml(data, isComplete, noResultsMsg, 'block');
+            // Focus is deliberately left where the user put it. Moving it into
+            // this container made NVDA read the entire table, and it ejected a
+            // keyboard user from the column-toggle fieldset on every change.
+            // announceSearchComplete() reports the outcome instead.
+            syncResultsRegion($('#fbps-search-results').html(html));
+            initTableSort('#fbps-search-results', 'block');
         }
 
         function displayError(message) {
@@ -345,12 +453,13 @@
             // and the retry is itself rate limited.
             if (allResults.length) {
                 html += '<p class="fbps-partial-notice">' + escapeHtml(fbpsData.i18n.partialResults) + '</p>';
-                html += buildResultsTableHtml(allResults, false, fbpsData.i18n.noBlockResults);
+                html += buildResultsTableHtml(allResults, false, fbpsData.i18n.noBlockResults, 'block');
             }
 
             syncResultsRegion($('#fbps-search-results').html(html));
-            initTableSort('#fbps-search-results');
+            initTableSort('#fbps-search-results', 'block');
             $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-search-button'));
             $('#fbps-cancel-button').hide();
             $('#fbps-progress').hide();
             if (allResults.length) {
@@ -369,15 +478,11 @@
             }
 
             currentSearch = block || className || anchorName;
-            allResults = [];
+            clearAllResults();
             $('#fbps-export-button').hide();
             $('#fbps-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-cancel-button').show();
-            // Clear all result containers
-            syncResultsRegion($('#fbps-search-results').empty());
-            syncResultsRegion($('#fbps-pattern-search-results').empty());
-            syncResultsRegion($('#fbps-shortcode-search-results').empty());
-            $('#fbps-progress').show();
+            $('#fbps-progress').removeClass('fbps-progress-done').show();
             updateProgress(0);
 
             ensureFreshNonce(function() {
@@ -393,6 +498,7 @@
         $('#fbps-cancel-button').on('click', function(){
             currentSearch = null;
             $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-search-button'));
             $('#fbps-cancel-button').hide();
             $('#fbps-progress').hide();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
@@ -402,20 +508,14 @@
         // Unified CSV Export - detects which search type has results
         $('#fbps-export-button').on('click', function(){
             var cols = getVisibleColumns();
-            var columnLabels = {
-                title: 'Title',
-                type: 'Type',
-                date: 'Date',
-                className: 'CSS Class',
-                anchor: 'HTML Anchor'
-            };
-
-            // Build CSV header from visible columns + View Link
+            // Build CSV header from visible columns + View Link, using the same
+            // translated labels as the table so the two never disagree.
             var headerParts = [];
             cols.forEach(function(col) {
-                headerParts.push(columnLabels[col] || col);
+                var def = columnDefs[col];
+                headerParts.push(sanitizeCsvValue(def ? fbpsData.i18n[def.label] : col));
             });
-            headerParts.push('View Link');
+            headerParts.push(sanitizeCsvValue(fbpsData.i18n.viewLink));
             var csv = headerParts.join(',') + '\n';
 
             var filename = '';
@@ -442,11 +542,15 @@
                 filename = 'shortcode-usage-' + shortcodeName + '.csv';
             }
 
-            // Build CSV from results using visible columns
+            // Build CSV from results using visible columns.
+            // The Title cell uses the same fallback as the table, so a row that
+            // reads "(no title)" on screen reads "(no title)" in the export
+            // rather than coming out blank.
             results.forEach(function(item){
                 var rowParts = [];
                 cols.forEach(function(col) {
-                    rowParts.push('"' + sanitizeCsvValue(item[col] || '') + '"');
+                    var val = (col === 'title') ? (item.title || fbpsData.i18n.noTitle) : (item[col] || '');
+                    rowParts.push('"' + sanitizeCsvValue(val) + '"');
                 });
                 rowParts.push('"' + sanitizeCsvValue(item.view_link) + '"');
                 csv += rowParts.join(',') + '\n';
@@ -506,7 +610,7 @@
                     return;
                 }
 
-                accumulated = accumulated.concat(data.results);
+                accumulated = applySort('pattern', accumulated.concat(data.results));
                 allPatternResults = accumulated;
 
                 // Store total_posts from first batch
@@ -525,8 +629,9 @@
                     searchPatternBatch(patternId, postTypes, data.next_offset, accumulated);
                 } else {
                     $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-pattern-search-button'));
                     $('#fbps-pattern-cancel-button').hide();
-                    $('#fbps-pattern-progress').hide();
+                    announceSearchComplete($('#fbps-pattern-progress'), accumulated.length, fbpsData.i18n.noPatternResults);
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
                     }
@@ -544,17 +649,15 @@
             $('#fbps-pattern-progress').html(html);
         }
 
-        function displayPatternResults(data, isComplete, moveFocus) {
+        function displayPatternResults(data, isComplete) {
             patternSearchComplete = isComplete;
-            var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noPatternResults);
-            var $c = syncResultsRegion($('#fbps-pattern-search-results').html(html).attr('tabindex', '-1'));
-            // Only pull focus when a search produced this render. Re-rendering
-            // from a column toggle must leave focus on the checkbox the user
-            // just operated, or they are ejected from the fieldset each time.
-            if (moveFocus !== false) {
-                $c.focus();
-            }
-            initTableSort('#fbps-pattern-search-results');
+            var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noPatternResults, 'pattern');
+            // Focus is deliberately left where the user put it. Moving it into
+            // this container made NVDA read the entire table, and it ejected a
+            // keyboard user from the column-toggle fieldset on every change.
+            // announceSearchComplete() reports the outcome instead.
+            syncResultsRegion($('#fbps-pattern-search-results').html(html));
+            initTableSort('#fbps-pattern-search-results', 'pattern');
         }
 
         function displayPatternError(message) {
@@ -566,12 +669,13 @@
             // and the retry is itself rate limited.
             if (allPatternResults.length) {
                 html += '<p class="fbps-partial-notice">' + escapeHtml(fbpsData.i18n.partialResults) + '</p>';
-                html += buildResultsTableHtml(allPatternResults, false, fbpsData.i18n.noPatternResults);
+                html += buildResultsTableHtml(allPatternResults, false, fbpsData.i18n.noPatternResults, 'pattern');
             }
 
             syncResultsRegion($('#fbps-pattern-search-results').html(html));
-            initTableSort('#fbps-pattern-search-results');
+            initTableSort('#fbps-pattern-search-results', 'pattern');
             $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-pattern-search-button'));
             $('#fbps-pattern-cancel-button').hide();
             $('#fbps-pattern-progress').hide();
             if (allPatternResults.length) {
@@ -586,15 +690,11 @@
             }
 
             currentPatternSearch = patternId;
-            allPatternResults = [];
+            clearAllResults();
             $('#fbps-export-button').hide();
             $('#fbps-pattern-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-pattern-cancel-button').show();
-            // Clear all result containers
-            syncResultsRegion($('#fbps-search-results').empty());
-            syncResultsRegion($('#fbps-pattern-search-results').empty());
-            syncResultsRegion($('#fbps-shortcode-search-results').empty());
-            $('#fbps-pattern-progress').show();
+            $('#fbps-pattern-progress').removeClass('fbps-progress-done').show();
             updatePatternProgress(0);
 
             ensureFreshNonce(function() {
@@ -611,6 +711,7 @@
         $('#fbps-pattern-cancel-button').on('click', function(){
             currentPatternSearch = null;
             $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-pattern-search-button'));
             $('#fbps-pattern-cancel-button').hide();
             $('#fbps-pattern-progress').hide();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
@@ -652,7 +753,7 @@
                     return;
                 }
 
-                accumulated = accumulated.concat(data.results);
+                accumulated = applySort('shortcode', accumulated.concat(data.results));
                 allShortcodeResults = accumulated;
 
                 // Store total_posts from first batch
@@ -671,8 +772,9 @@
                     searchShortcodeBatch(shortcodeName, postTypes, data.next_offset, accumulated);
                 } else {
                     $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-shortcode-search-button'));
                     $('#fbps-shortcode-cancel-button').hide();
-                    $('#fbps-shortcode-progress').hide();
+                    announceSearchComplete($('#fbps-shortcode-progress'), accumulated.length, fbpsData.i18n.noShortcodeResults);
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
                     }
@@ -690,17 +792,15 @@
             $('#fbps-shortcode-progress').html(html);
         }
 
-        function displayShortcodeResults(data, isComplete, moveFocus) {
+        function displayShortcodeResults(data, isComplete) {
             shortcodeSearchComplete = isComplete;
-            var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noShortcodeResults);
-            var $c = syncResultsRegion($('#fbps-shortcode-search-results').html(html).attr('tabindex', '-1'));
-            // Only pull focus when a search produced this render. Re-rendering
-            // from a column toggle must leave focus on the checkbox the user
-            // just operated, or they are ejected from the fieldset each time.
-            if (moveFocus !== false) {
-                $c.focus();
-            }
-            initTableSort('#fbps-shortcode-search-results');
+            var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noShortcodeResults, 'shortcode');
+            // Focus is deliberately left where the user put it. Moving it into
+            // this container made NVDA read the entire table, and it ejected a
+            // keyboard user from the column-toggle fieldset on every change.
+            // announceSearchComplete() reports the outcome instead.
+            syncResultsRegion($('#fbps-shortcode-search-results').html(html));
+            initTableSort('#fbps-shortcode-search-results', 'shortcode');
         }
 
         function displayShortcodeError(message) {
@@ -712,12 +812,13 @@
             // and the retry is itself rate limited.
             if (allShortcodeResults.length) {
                 html += '<p class="fbps-partial-notice">' + escapeHtml(fbpsData.i18n.partialResults) + '</p>';
-                html += buildResultsTableHtml(allShortcodeResults, false, fbpsData.i18n.noShortcodeResults);
+                html += buildResultsTableHtml(allShortcodeResults, false, fbpsData.i18n.noShortcodeResults, 'shortcode');
             }
 
             syncResultsRegion($('#fbps-shortcode-search-results').html(html));
-            initTableSort('#fbps-shortcode-search-results');
+            initTableSort('#fbps-shortcode-search-results', 'shortcode');
             $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-shortcode-search-button'));
             $('#fbps-shortcode-cancel-button').hide();
             $('#fbps-shortcode-progress').hide();
             if (allShortcodeResults.length) {
@@ -732,15 +833,11 @@
             }
 
             currentShortcodeSearch = shortcodeName;
-            allShortcodeResults = [];
+            clearAllResults();
             $('#fbps-export-button').hide();
             $('#fbps-shortcode-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-shortcode-cancel-button').show();
-            // Clear all result containers
-            syncResultsRegion($('#fbps-search-results').empty());
-            syncResultsRegion($('#fbps-pattern-search-results').empty());
-            syncResultsRegion($('#fbps-shortcode-search-results').empty());
-            $('#fbps-shortcode-progress').show();
+            $('#fbps-shortcode-progress').removeClass('fbps-progress-done').show();
             updateShortcodeProgress(0);
 
             ensureFreshNonce(function() {
@@ -757,22 +854,45 @@
         $('#fbps-shortcode-cancel-button').on('click', function(){
             currentShortcodeSearch = null;
             $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
+            restoreFocusIfLost($('#fbps-shortcode-search-button'));
             $('#fbps-shortcode-cancel-button').hide();
             $('#fbps-shortcode-progress').hide();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
             syncResultsRegion($('#fbps-shortcode-search-results').html(html));
         });
 
+        /** How initTableSort() reaches each surface's data and renderer. */
+        var surfaces = {
+            block: {
+                get: function() { return allResults; },
+                set: function(v) { allResults = v; },
+                display: function(d, c) { displayResults(d, c); },
+                complete: function() { return blockSearchComplete; }
+            },
+            pattern: {
+                get: function() { return allPatternResults; },
+                set: function(v) { allPatternResults = v; },
+                display: function(d, c) { displayPatternResults(d, c); },
+                complete: function() { return patternSearchComplete; }
+            },
+            shortcode: {
+                get: function() { return allShortcodeResults; },
+                set: function(v) { allShortcodeResults = v; },
+                display: function(d, c) { displayShortcodeResults(d, c); },
+                complete: function() { return shortcodeSearchComplete; }
+            }
+        };
+
         // Re-render results when column toggles change
         $('.fbps-col-toggle').on('change', function() {
             if (allResults.length > 0) {
-                displayResults(allResults, blockSearchComplete, false);
+                displayResults(allResults, blockSearchComplete);
             }
             if (allPatternResults.length > 0) {
-                displayPatternResults(allPatternResults, patternSearchComplete, false);
+                displayPatternResults(allPatternResults, patternSearchComplete);
             }
             if (allShortcodeResults.length > 0) {
-                displayShortcodeResults(allShortcodeResults, shortcodeSearchComplete, false);
+                displayShortcodeResults(allShortcodeResults, shortcodeSearchComplete);
             }
         });
     });

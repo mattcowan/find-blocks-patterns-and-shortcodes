@@ -45,12 +45,15 @@ test('column toggles keep focus, and sort headers announce their direction', asy
 
   const sortAfter = await h.readSortState(page, 'block');
 
-  // Re-reading the header after the sort is what a user does to confirm it.
-  await titleSortButton.focus();
-  await h.delay(300);
-  await h.press(page, nvda, 'NVDA+Tab'); // report current focus
-  await h.delay(600);
-  const reReadPhrase = await nvda.lastSpokenPhrase();
+  // Note on probing sort state: an NVDA+Tab "report current focus" after the
+  // sort is NOT a reliable probe here. On 2026-09-18 it returned
+  // "column 2, Type, button" while focus was on the Title button - NVDA
+  // reported the cell its review cursor sat in after reading the table, not
+  // the focused control. Type's aria-sort is "none", so NVDA was correctly
+  // silent about sorting and the probe looked like a product failure.
+  //
+  // The sort announcement is asserted on `sortPhrase` instead, which is
+  // captured around the Guidepup command that actually performs the sort.
 
   const log = await h.saveSpeechLog(nvda, 'results-table', {
     togglePhrase,
@@ -58,7 +61,6 @@ test('column toggles keep focus, and sort headers announce their direction', asy
     sortBefore,
     sortAfter,
     sortPhrase,
-    reReadPhrase,
   });
 
   // --- Product assertions ---
@@ -86,10 +88,11 @@ test('column toggles keep focus, and sort headers announce their direction', asy
 
   // --- Screen-reader assertions ---
 
-  // NVDA should expose the sort state when the header is read.
-  expect(reReadPhrase).toMatch(/sort|ascending|descending/i);
+  // NVDA must announce the new sort state when the sort happens (F6).
+  expect(sortPhrase, 'NVDA did not announce the sort direction').toMatch(/sorted ascending/i);
 
-  // Neither action may dump the whole table into one phrase (F7).
+  // Neither action may dump the whole table into one phrase. Ticking a single
+  // checkbox used to read all nine rows before saying "checked" (F7).
   expect((togglePhrase || '').length).toBeLessThan(400);
   expect((sortPhrase || '').length).toBeLessThan(400);
 

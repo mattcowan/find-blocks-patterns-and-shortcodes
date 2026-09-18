@@ -69,6 +69,10 @@ not a broken test — read the saved phrase log before changing an expectation.
   scoped to the WordPress admin title for this screen for that reason.
 - **An empty phrase is usually a capture miss**, not a finding. Re-run before
   reporting one.
+- **Never `taskkill /F` NVDA between runs.** A forced kill left the next
+  Guidepup start timing out with "NVDA cannot be started" (2026-09-18). Use
+  the `-q` quit above. And check CPU load first — a VS Code update installing
+  in the background was enough to starve NVDA and Firefox of the desktop.
 
 Shared mechanics and the full trap list live in
 `~/.claude/skills/shared/qa/nvda-guidepup.md`.

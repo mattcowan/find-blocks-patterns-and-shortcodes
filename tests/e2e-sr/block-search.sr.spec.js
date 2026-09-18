@@ -6,11 +6,12 @@
  *
  *  - Does every form control announce a name? (F8 wired the four visible hints
  *    to their controls with aria-describedby; this checks NVDA reads them.)
- *  - What does the results container announce when it fills? It is
- *    aria-live="polite" AND aria-atomic="true" AND takes focus, so the whole
- *    table may be re-read on every batch. That is open finding F7 - the fix
- *    depends on what NVDA actually does, which is what this measures.
- *  - Does the search announce completion at all?
+ *  - Is the search outcome announced, and briefly? The results container used
+ *    to be aria-live + aria-atomic AND take focus, so NVDA read the entire
+ *    table on every batch - 1778 characters for nine rows, measured 2026-09-18.
+ *    It is no longer a live region; the small role="status" progress region
+ *    carries a short "N results found" instead. The 400-character ceiling below
+ *    is the regression guard on that.
  */
 const { nvdaTest: test } = require('@guidepup/playwright');
 const { expect } = require('@playwright/test');

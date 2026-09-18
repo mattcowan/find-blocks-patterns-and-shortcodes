@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.1.3
+ * Version:     1.1.4
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.1.3' );
+define( 'FBPS_VERSION', '1.1.4' );
 
 /**
  * Plugin activation - register custom capability.
@@ -148,8 +148,9 @@ function fbps_enqueue_admin_assets( $hook ) {
 				'found'                 => __( 'found', 'find-blocks-patterns-shortcodes' ),
 				'title'                 => __( 'Title', 'find-blocks-patterns-shortcodes' ),
 				'noTitle'               => __( '(no title)', 'find-blocks-patterns-shortcodes' ),
+				'viewLink'              => __( 'View Link', 'find-blocks-patterns-shortcodes' ),
 				'type'                  => __( 'Type', 'find-blocks-patterns-shortcodes' ),
-				'date'                  => __( 'Date', 'find-blocks-patterns-shortcodes' ),
+				'date'                  => __( 'Modified', 'find-blocks-patterns-shortcodes' ),
 				'actions'               => __( 'Actions', 'find-blocks-patterns-shortcodes' ),
 				'view'                  => __( 'View', 'find-blocks-patterns-shortcodes' ),
 				'edit'                  => __( 'Edit', 'find-blocks-patterns-shortcodes' ),
@@ -344,33 +345,70 @@ function fbps_validate_block_namespace( $block_name ) {
 /**
  * Check rate limiting for user and IP.
  */
-function fbps_check_rate_limit() {
+/**
+ * Rate limit searches per user and per IP.
+ *
+ * Two things about how this counts:
+ *
+ * 1. It counts SEARCHES in one tier and REQUESTS in another. A search of up
+ *    to 1000 posts is up to ten AJAX requests, so counting every request
+ *    meant "30 per minute" was really three to six searches. The search tier
+ *    is incremented only by a search's first batch ($count_it = true,
+ *    batch_offset 0). The request tier counts every batch at a ten-times
+ *    higher ceiling, so a client that only ever sends continuation offsets
+ *    is still bounded.
+ *
+ * 2. The window is a fixed calendar minute, keyed on the current UTC minute.
+ *    The previous sliding version called set_transient() on every request,
+ *    which reset the expiry each time, so a user who kept retrying kept
+ *    pushing their own unlock time back. A bucket key simply rolls over.
+ *
+ * @param bool $count_it Whether this request starts a new search.
+ * @return true|WP_Error
+ */
+function fbps_check_rate_limit( $count_it = true ) {
     $user_id = get_current_user_id();
     $client_ip = fbps_get_client_ip();
+    $window = gmdate( 'YmdHi' );
+    $uid = absint( $user_id );
+    $iph = md5( $client_ip );
 
-    // Track by both user ID and IP
-    $rate_limit_keys = [
-        'user_' . absint( $user_id ) => 30,  // 30 requests per minute per user
-        'ip_' . md5( $client_ip ) => 50,     // 50 requests per minute per IP
+    // Two tiers. The search tier counts only a search's first batch, so the
+    // numbers mean what a user would expect. The request tier counts every
+    // batch, so raw request volume stays bounded even for a client that only
+    // ever sends continuation offsets.
+    $limits = [
+        [ 'key' => 'user_' . $uid,     'max' => 30,  'count' => $count_it ], // searches / min / user
+        [ 'key' => 'ip_' . $iph,       'max' => 50,  'count' => $count_it ], // searches / min / IP
+        [ 'key' => 'req_user_' . $uid, 'max' => 300, 'count' => true ],      // requests / min / user
+        [ 'key' => 'req_ip_' . $iph,   'max' => 500, 'count' => true ],      // requests / min / IP
     ];
 
-    foreach ( $rate_limit_keys as $key => $max_requests ) {
-        $full_key = 'fbps_rate_limit_' . sanitize_key( $key );
-        $requests = get_transient( $full_key );
-
+    // Check every tier before counting anything, so a request refused by one
+    // tier is not also charged to another.
+    foreach ( $limits as &$limit ) {
+        $limit['full_key'] = 'fbps_rate_limit_' . sanitize_key( $limit['key'] . '_' . $window );
         // Ensure we're working with integers only (object injection prevention)
-        $requests = absint( $requests );
+        $limit['current'] = absint( get_transient( $limit['full_key'] ) );
 
-        if ( $requests > $max_requests ) {
+        if ( $limit['current'] >= $limit['max'] ) {
             fbps_log_security_event( 'rate_limit_exceeded', [
-                'key' => $key,
-                'requests' => $requests,
-                'limit' => $max_requests
+                'key' => $limit['key'],
+                'requests' => $limit['current'],
+                'limit' => $limit['max']
             ] );
             return new WP_Error( 'rate_limit', __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ) );
         }
+    }
+    unset( $limit );
 
-        set_transient( $full_key, $requests + 1, MINUTE_IN_SECONDS );
+    foreach ( $limits as $limit ) {
+        if ( $limit['count'] ) {
+            // Two minutes, not one: a bucket opened at :59 must outlive the
+            // minute it belongs to, and expiry resets are harmless now that
+            // the key itself rotates.
+            set_transient( $limit['full_key'], $limit['current'] + 1, 2 * MINUTE_IN_SECONDS );
+        }
     }
 
     return true;
@@ -407,6 +445,105 @@ function fbps_get_synced_patterns() {
 }
 
 /**
+ * Walk parsed blocks (and their inner blocks) looking for a core/block
+ * reference to $pattern_id.
+ *
+ * @param array $blocks     Output of parse_blocks().
+ * @param int   $pattern_id The wp_block post ID to look for.
+ * @return bool
+ */
+function fbps_blocks_reference_pattern( $blocks, $pattern_id ) {
+    foreach ( $blocks as $block ) {
+        if ( isset( $block['blockName'] ) && 'core/block' === $block['blockName']
+            && isset( $block['attrs']['ref'] )
+            && (int) $block['attrs']['ref'] === $pattern_id ) {
+            return true;
+        }
+
+        if ( ! empty( $block['innerBlocks'] ) && fbps_blocks_reference_pattern( $block['innerBlocks'], $pattern_id ) ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Does this post content use the given synced pattern?
+ *
+ * Uses WordPress's own block parser rather than a regex over the serialized
+ * markup. A regex has to model the attribute JSON, and every time the block
+ * format grows the regex silently starts returning false negatives:
+ *
+ *   - core/block is a void block, so the delimiter ends "} /-->", not "} -->".
+ *   - Pattern overrides (WP 6.6+) and renamed instances nest objects inside
+ *     attrs, so any [^}]* style scan stops at the first inner closing brace.
+ *   - "ref":12 must not match a reference to pattern 120.
+ *
+ * parse_blocks() is core's serializer in reverse, so it cannot drift from it.
+ * The strpos() pre-check keeps the common case (a post that references no
+ * pattern at all) as cheap as the old regex, because parse_blocks() only runs
+ * on content that contains a wp:block delimiter.
+ *
+ * @param string $content    Raw post_content.
+ * @param int    $pattern_id The wp_block post ID to look for.
+ * @return bool
+ */
+function fbps_content_uses_pattern( $content, $pattern_id ) {
+    if ( ! is_string( $content ) || '' === $content ) {
+        return false;
+    }
+
+    $pattern_id = absint( $pattern_id );
+    if ( ! $pattern_id ) {
+        return false;
+    }
+
+    // Cheap reject: no synced pattern reference can exist without this substring.
+    if ( false === strpos( $content, 'wp:block' ) ) {
+        return false;
+    }
+
+    return fbps_blocks_reference_pattern( parse_blocks( $content ), $pattern_id );
+}
+
+/**
+ * Drop the cached shortcode list when the set of registered shortcodes can
+ * change: a plugin activating or deactivating, or a theme switch. Same gap
+ * as the pattern cache below - without this a shortcode from a newly
+ * activated plugin took up to five minutes to appear in the dropdown.
+ */
+add_action( 'activated_plugin', 'fbps_flush_shortcode_cache' );
+add_action( 'deactivated_plugin', 'fbps_flush_shortcode_cache' );
+add_action( 'switch_theme', 'fbps_flush_shortcode_cache' );
+function fbps_flush_shortcode_cache() {
+    delete_transient( 'fbps_all_shortcodes' );
+}
+
+/**
+ * Drop the cached synced-pattern list whenever a wp_block post changes.
+ *
+ * fbps_get_synced_patterns() caches the dropdown for five minutes. Without
+ * this, a pattern created just before opening the tool does not appear until
+ * the transient expires, and the only remedy is the CLI clear-cache command.
+ *
+ * save_post_{post_type} covers create, update, publish and trash (trashing is
+ * a status change through wp_update_post). deleted_post covers permanent
+ * deletion, and is not type-specific, so it checks the type itself.
+ */
+add_action( 'save_post_wp_block', 'fbps_flush_pattern_cache' );
+add_action( 'deleted_post', 'fbps_flush_pattern_cache_on_delete', 10, 2 );
+function fbps_flush_pattern_cache() {
+    delete_transient( 'fbps_synced_patterns' );
+}
+function fbps_flush_pattern_cache_on_delete( $post_id, $post = null ) {
+    $post = $post ? $post : get_post( $post_id );
+    if ( $post && 'wp_block' === $post->post_type ) {
+        fbps_flush_pattern_cache();
+    }
+}
+
+/**
  * Returns an array of WP_Post objects that contain the specified synced pattern.
  */
 function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
@@ -440,16 +577,6 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
     $matches = [];
     $start_time = microtime( true );
 
-    // Build regex pattern to find wp:block with ref attribute.
-    //
-    // core/block has no inner content, so WordPress always serializes a synced
-    // pattern reference as a void block: <!-- wp:block {"ref":12} /-->. The
-    // optional \/? is therefore required, not defensive - without it this never
-    // matches anything. \s* rather than \s+ also allows "{"ref":12}/-->".
-    //
-    // (?!\d) stops pattern 12 from matching a reference to pattern 120, which
-    // the trailing [^}]* would otherwise swallow.
-    $ref_pattern = '/<!--\s+wp:block\s+\{[^}]*"ref"\s*:\s*' . $pattern_id . '(?!\d)[^}]*\}\s*\/?-->/';
 
     foreach ( $ids as $post_id ) {
         // Timeout protection
@@ -466,8 +593,7 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
 
         if ( false === $has_pattern_cached ) {
             $post = get_post( $post_id );
-            // Check if post content contains the pattern reference
-            $has_pattern_cached = preg_match( $ref_pattern, $post->post_content ) ? 'yes' : 'no';
+            $has_pattern_cached = fbps_content_uses_pattern( $post->post_content, $pattern_id ) ? 'yes' : 'no';
             wp_cache_set( $cache_key, $has_pattern_cached, 'find-blocks-patterns-shortcodes', 300 ); // 5-minute cache
         }
 
@@ -714,19 +840,26 @@ function fbps_add_menu() {
 }
 
 /**
- * Add security headers to admin page.
+ * Add security headers to the plugin's admin page.
+ *
+ * Hooked to load-{$page_hook}, which WordPress fires only when this screen is
+ * about to render and before any output. This used to sit on admin_init and
+ * compare get_current_screen()->id, which never worked for two reasons:
+ * admin_init fires before set_current_screen(), so the screen was always null,
+ * and the id it compared against was toplevel_page_* when a Tools submenu is
+ * tools_page_* (the same string the asset enqueue already uses correctly).
  */
-add_action( 'admin_init', 'fbps_set_security_headers' );
+add_action( 'load-tools_page_find-blocks-patterns-shortcodes', 'fbps_set_security_headers' );
 function fbps_set_security_headers() {
-    $screen = get_current_screen();
-    if ( ! $screen || $screen->id !== 'toplevel_page_find-blocks-patterns-shortcodes' ) {
+    if ( headers_sent() ) {
         return;
     }
 
     // Security headers
+    // X-XSS-Protection is deliberately not sent: the legacy auditor it
+    // enabled was removed from Chromium, and OWASP/MDN now advise against it.
     header( 'X-Content-Type-Options: nosniff' );
     header( 'X-Frame-Options: SAMEORIGIN' );
-    header( 'X-XSS-Protection: 1; mode=block' );
     header( 'Referrer-Policy: strict-origin-when-cross-origin' );
     header( 'Permissions-Policy: geolocation=(), microphone=(), camera=()' );
 }
@@ -894,30 +1027,32 @@ function fbps_render_admin_page() {
             <legend><?php esc_html_e( 'Show columns:', 'find-blocks-patterns-shortcodes' ); ?></legend>
             <label><input type="checkbox" class="fbps-col-toggle" value="title" checked> <?php esc_html_e( 'Title', 'find-blocks-patterns-shortcodes' ); ?></label>
             <label><input type="checkbox" class="fbps-col-toggle" value="type" checked> <?php esc_html_e( 'Type', 'find-blocks-patterns-shortcodes' ); ?></label>
-            <label><input type="checkbox" class="fbps-col-toggle" value="date" checked> <?php esc_html_e( 'Date', 'find-blocks-patterns-shortcodes' ); ?></label>
+            <label><input type="checkbox" class="fbps-col-toggle" value="date" checked> <?php esc_html_e( 'Modified', 'find-blocks-patterns-shortcodes' ); ?></label>
             <label><input type="checkbox" class="fbps-col-toggle" value="className"> <?php esc_html_e( 'CSS Class', 'find-blocks-patterns-shortcodes' ); ?></label>
             <label><input type="checkbox" class="fbps-col-toggle" value="anchor"> <?php esc_html_e( 'HTML Anchor', 'find-blocks-patterns-shortcodes' ); ?></label>
         </fieldset>
-        <?php // role="region" and aria-label are added by admin.js only while a
+        <?php // These containers are NOT live regions. NVDA read the entire
+              // results table aloud on every change when they were, because
+              // aria-atomic re-announces the whole region and the table lives
+              // inside it - 1778 characters for a nine-row table, five times
+              // over on a 500-post search. Completion is announced instead by
+              // the small role="status" progress region above, which exists
+              // from page load and so announces reliably.
+              //
+              // role="region" and aria-label are added by admin.js only while a
               // container holds results, so empty containers stay out of the
               // landmark list. aria-label is prohibited on a div with no role,
               // so the label waits in data-region-label until it applies. ?>
         <div id="fbps-shortcode-search-results"
              class="fbps-results-container"
-             aria-live="polite"
-             aria-atomic="true"
              data-region-label="<?php esc_attr_e( 'Shortcode Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
         <div id="fbps-pattern-search-results"
              class="fbps-results-container"
-             aria-live="polite"
-             aria-atomic="true"
              data-region-label="<?php esc_attr_e( 'Pattern Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
         <div id="fbps-search-results"
              class="fbps-results-container"
-             aria-live="polite"
-             aria-atomic="true"
              data-region-label="<?php esc_attr_e( 'Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
     </div>
@@ -1205,7 +1340,8 @@ function fbps_ajax_search_block() {
         }
 
         // Rate limiting with IP tracking
-        $rate_check = fbps_check_rate_limit();
+        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
+        $rate_check = fbps_check_rate_limit( 0 === $batch_offset );
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
@@ -1215,7 +1351,6 @@ function fbps_ajax_search_block() {
         $class_name = isset( $_POST['class_name'] ) ? sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) : '';
         $anchor_name = isset( $_POST['anchor_name'] ) ? sanitize_text_field( wp_unslash( $_POST['anchor_name'] ) ) : '';
         $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
-        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
 
         $has_attribute_search = ! empty( $class_name ) || ! empty( $anchor_name );
 
@@ -1286,6 +1421,9 @@ function fbps_ajax_search_block() {
                 'view_link' => esc_url_raw( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
                 'date'      => $post_date,
+                // Formatted server-side with the site's date format and locale;
+                // the raw value above stays for sorting.
+                'date_display' => mysql2date( get_option( 'date_format' ), $post_date ),
                 'className' => $attrs['className'],
                 'anchor'    => $attrs['anchor'],
             ];
@@ -1342,7 +1480,8 @@ function fbps_ajax_search_pattern() {
         }
 
         // Rate limiting with IP tracking
-        $rate_check = fbps_check_rate_limit();
+        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
+        $rate_check = fbps_check_rate_limit( 0 === $batch_offset );
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
@@ -1350,7 +1489,6 @@ function fbps_ajax_search_pattern() {
         // Proper input handling with wp_unslash()
         $pattern_id = isset( $_POST['pattern_id'] ) ? absint( $_POST['pattern_id'] ) : 0;
         $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
-        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
 
         if ( empty( $pattern_id ) ) {
             throw new Exception( 'empty_input' );
@@ -1383,6 +1521,9 @@ function fbps_ajax_search_pattern() {
                 'view_link' => esc_url_raw( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
                 'date'      => $post_date,
+                // Formatted server-side with the site's date format and locale;
+                // the raw value above stays for sorting.
+                'date_display' => mysql2date( get_option( 'date_format' ), $post_date ),
             ];
         }
 
@@ -1435,7 +1576,8 @@ function fbps_ajax_search_shortcode() {
 		}
 
 		// Rate limiting with IP tracking
-		$rate_check = fbps_check_rate_limit();
+		$batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
+		$rate_check = fbps_check_rate_limit( 0 === $batch_offset );
 		if ( is_wp_error( $rate_check ) ) {
 			throw new Exception( 'rate_limit' );
 		}
@@ -1443,7 +1585,6 @@ function fbps_ajax_search_shortcode() {
 		// Proper input handling with wp_unslash()
 		$shortcode_name = isset( $_POST['shortcode_name'] ) ? sanitize_text_field( wp_unslash( $_POST['shortcode_name'] ) ) : '';
 		$post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
-		$batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
 
 		if ( empty( $shortcode_name ) ) {
 			throw new Exception( 'empty_input' );
@@ -1487,6 +1628,9 @@ function fbps_ajax_search_shortcode() {
 				'view_link' => esc_url_raw( get_permalink( $post ) ),
 				'type'      => sanitize_key( $post->post_type ),
 				'date'      => $post_date,
+				// Formatted server-side with the site's date format and locale;
+				// the raw value above stays for sorting.
+				'date_display' => mysql2date( get_option( 'date_format' ), $post_date ),
 			];
 		}
 

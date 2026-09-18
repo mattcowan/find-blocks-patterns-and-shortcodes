@@ -4,7 +4,7 @@ Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
 Tested up to: 7.0
 Requires PHP: 7.0
-Stable tag: 1.1.3
+Stable tag: 1.1.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -86,6 +86,25 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 2. Search results table with sortable columns and export csv button
 
 == Changelog ==
+
+= 1.1.4 =
+* Fixed Export CSV writing the results of an earlier search. If you did a block search and then a pattern search, the export gave you the block results.
+* Synced pattern search now uses the WordPress block parser instead of a text search. It finds patterns that use pattern overrides or a renamed instance, which the text search missed.
+* Fixed the results table showing a "sorted by date" state that was not true. Results now start sorted by date, newest first, in the table and in the CSV export.
+* The Title column in the CSV export now says "(no title)" for a post with no title, the same as the table.
+* A screen reader no longer reads the full results table each time you change a column or sort it. The plugin now says only how many results it found.
+* The search results no longer take the keyboard focus when they load.
+* The version check script now also checks package.json.
+* The security headers for the plugin page are now sent. They were attached to a hook that runs before WordPress knows which screen is loading, so they never were.
+* The results column that showed the last modified date is now labeled "Modified", not "Date".
+* Dates in the results table now use the date format and language set in Settings > General.
+* The CSV export header row is now translated, the same as the table.
+* A new synced pattern now appears in the pattern list at once. Before, it could take up to five minutes.
+* The View and Edit links in all three results tables now show the same focus outline.
+* The rate limit now counts searches, not the batches inside a search. A second, higher limit still counts every request. The limit also no longer extends your wait time each time you try again.
+* The CSV export now uses the same sort order as the table, also after you sort by a column.
+* A shortcode from a plugin you activate now appears in the shortcode list at once.
+* The plugin no longer sends the X-XSS-Protection header. Browsers no longer use it.
 
 = 1.1.3 =
 * Fixed synced pattern search, which could not find any content. WordPress writes a pattern reference as a self-closing block comment, and the search did not accept that form.
