@@ -88,10 +88,20 @@ test('block search: form controls announce, and results announce when they arriv
   expect(summary.longestPhrase).toBeLessThan(400);
   expect((afterSearchPhrase || '').length).toBeLessThan(400);
 
+  // ...and it must actually say the outcome. An empty phrase would pass the
+  // length check while meaning the completion announcement had vanished.
+  expect(afterSearchPhrase, 'search completion was not announced').toMatch(/results? found/i);
+
   // The multi-select hint is only useful if it is actually announced (F8).
   const postTypesStop = stops.find((s) => s.el && s.el.id === 'fbps-post-types');
   expect(postTypesStop, 'Tab walk never reached the post types select').toBeTruthy();
   expect(postTypesStop.phrase).toMatch(/multiple|Ctrl|Cmd/i);
+
+  // Same for the anchor field's hint - the other control on this form that
+  // carries aria-describedby.
+  const anchorStop = stops.find((s) => s.el && s.el.id === 'fbps-anchor-name');
+  expect(anchorStop, 'Tab walk never reached the anchor field').toBeTruthy();
+  expect(anchorStop.phrase).toMatch(/optional/i);
 
   expect(log.length).toBeGreaterThan(0);
 });

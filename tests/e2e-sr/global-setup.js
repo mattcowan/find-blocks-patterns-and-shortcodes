@@ -1,7 +1,8 @@
 /**
  * Log in once with headless Chromium and save the cookies for the
  * screen-reader project. Credentials come from .env (WP_USERNAME /
- * WP_PASSWORD); WP_BASE_URL is the site.
+ * WP_PASSWORD); QA_BASE_URL or WP_BASE_URL is the site, resolved the same
+ * way the Playwright config resolves it.
  *
  * HTTP policy: the login posts the password, so plain HTTP is allowed on
  * its own only for hosts that resolve to loopback. Because Chromium
@@ -78,7 +79,10 @@ module.exports = async () => {
   // Required here, not at load: the policy functions above are unit-tested
   // under Jest, where @playwright/test cannot be loaded.
   const { chromium } = require('@playwright/test');
-  const baseURL = process.env.WP_BASE_URL || 'http://typography-stylist:8080';
+  // Resolved the same way as playwright.nvda.config.js. auth.json is
+  // origin-scoped, so logging in to a different origin than the journeys
+  // navigate to would run every journey logged out.
+  const baseURL = process.env.QA_BASE_URL || process.env.WP_BASE_URL || 'http://typography-stylist:8080';
   const username = process.env.WP_USERNAME;
   const password = process.env.WP_PASSWORD;
   if (!username || !password) {

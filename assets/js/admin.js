@@ -380,6 +380,11 @@
                     }
                 }
             }).fail(function() {
+                // Same rule as the success path: a failure from a cancelled or
+                // replaced search must not repaint newer results or reset controls.
+                if (token !== searchToken.block) {
+                    return;
+                }
                 displayError(fbpsData.i18n.networkError);
             });
         }
@@ -592,6 +597,11 @@
             // The Title cell uses the same fallback as the table, so a row that
             // reads "(no title)" on screen reads "(no title)" in the export
             // rather than coming out blank.
+            //
+            // The Modified cell is deliberately NOT the localized display value
+            // the table shows: the export is data, and the raw MySQL datetime
+            // sorts correctly as text in a spreadsheet where "March 29, 2026"
+            // would not.
             results.forEach(function(item){
                 var rowParts = [];
                 cols.forEach(function(col) {
@@ -689,6 +699,11 @@
                     }
                 }
             }).fail(function() {
+                // Same rule as the success path: a failure from a cancelled or
+                // replaced search must not repaint newer results or reset controls.
+                if (token !== searchToken.pattern) {
+                    return;
+                }
                 displayPatternError(fbpsData.i18n.networkError);
             });
         }
@@ -838,6 +853,11 @@
                     }
                 }
             }).fail(function() {
+                // Same rule as the success path: a failure from a cancelled or
+                // replaced search must not repaint newer results or reset controls.
+                if (token !== searchToken.shortcode) {
+                    return;
+                }
                 displayShortcodeError(fbpsData.i18n.networkError);
             });
         }

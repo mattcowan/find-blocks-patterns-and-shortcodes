@@ -466,8 +466,14 @@ function fbps_get_synced_patterns() {
  */
 function fbps_blocks_reference_pattern( $blocks, $pattern_id ) {
     foreach ( $blocks as $block ) {
+        // Match exactly what WordPress renders. Core hands attrs.ref to
+        // get_post(), which accepts an int, a numeric string ("12") and a
+        // float (12.7), and renders pattern 12 for all three - so all three
+        // must match here. A non-numeric string ("12abc") is not rendered,
+        // and a bare (int) cast would wrongly turn it into 12.
         if ( isset( $block['blockName'] ) && 'core/block' === $block['blockName']
             && isset( $block['attrs']['ref'] )
+            && is_numeric( $block['attrs']['ref'] )
             && (int) $block['attrs']['ref'] === $pattern_id ) {
             return true;
         }

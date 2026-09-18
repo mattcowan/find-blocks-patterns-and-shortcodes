@@ -42,7 +42,9 @@ test('empty results containers are not landmarks; a filled one is', async ({ pag
     shortcode: await h.describeResultsRegion(page, 'shortcode'),
   };
 
-  // Only the container that holds results is a landmark.
+  // Only the container that holds results is a landmark - and it must hold
+  // them, or an empty container wrongly given the role would pass.
+  expect(after.block.rows).toBeGreaterThan(0);
   expect(after.block.role).toBe('region');
   expect(after.block.ariaLabel).toBeTruthy();
   expect(after.pattern.role).toBeNull();

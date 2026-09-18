@@ -74,5 +74,5 @@ not a broken test — read the saved phrase log before changing an expectation.
   the `-q` quit above. And check CPU load first — a VS Code update installing
   in the background was enough to starve NVDA and Firefox of the desktop.
 
-Shared mechanics and the full trap list live in
-`~/.claude/skills/shared/qa/nvda-guidepup.md`.
+How speech capture works, the project-file layout, and the full trap list are in
+[NVDA-GUIDEPUP.md](NVDA-GUIDEPUP.md) in this folder.
