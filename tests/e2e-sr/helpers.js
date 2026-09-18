@@ -28,11 +28,13 @@ const ADMIN_PATH = '/wp-admin/tools.php?page=find-blocks-patterns-shortcodes';
  * Still deliberately specific. A loose /find blocks/i would also match an
  * editor window with this plugin's folder open ("find-blocks-patterns-and-
  * shortcodes - C: wamp 64 www ..."), and every NVDA keystroke would then be
- * typed into the editor. Requiring the comma, the spaced words and the site
- * name keeps it to the browser.
+ * typed into the editor. Requiring the comma, the spaced words and the
+ * WordPress admin suffix keeps it to the browser. The site name is NOT part
+ * of the match, because the harness lets WP_BASE_URL point at any site.
  */
-const TITLE = /Find Blocks, Patterns (?:&|and) Shortcodes.*Typography Stylist/i;
+const TITLE = /Find Blocks, Patterns (?:&|and) Shortcodes.*Word ?Press/i;
 
+/** Selectors for the three search surfaces, kept in one place. */
 const SURFACES = {
   block: {
     form: '.fbps-search-section[aria-label*="block usage"]',

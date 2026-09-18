@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.1.4
+ * Version:     1.1.3
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.1.4' );
+define( 'FBPS_VERSION', '1.1.3' );
 
 /**
  * Plugin activation - register custom capability.
@@ -355,8 +355,9 @@ function fbps_validate_block_namespace( $block_name ) {
  *    meant "30 per minute" was really three to six searches. The search tier
  *    is incremented only by a search's first batch ($count_it = true,
  *    batch_offset 0). The request tier counts every batch at a ten-times
- *    higher ceiling, so a client that only ever sends continuation offsets
- *    is still bounded.
+ *    higher ceiling (double what 30 full searches can cost), so a client that
+ *    only ever sends continuation offsets is still bounded while a search the
+ *    limiter admitted is never cut short.
  *
  * 2. The window is a fixed calendar minute, keyed on the current UTC minute.
  *    The previous sliding version called set_transient() on every request,
@@ -380,18 +381,29 @@ function fbps_check_rate_limit( $count_it = true ) {
     $limits = [
         [ 'key' => 'user_' . $uid,     'max' => 30,  'count' => $count_it ], // searches / min / user
         [ 'key' => 'ip_' . $iph,       'max' => 50,  'count' => $count_it ], // searches / min / IP
-        [ 'key' => 'req_user_' . $uid, 'max' => 300, 'count' => true ],      // requests / min / user
-        [ 'key' => 'req_ip_' . $iph,   'max' => 500, 'count' => true ],      // requests / min / IP
+        [ 'key' => 'req_user_' . $uid, 'max' => 600,  'count' => true ],     // requests / min / user
+        [ 'key' => 'req_ip_' . $iph,   'max' => 1000, 'count' => true ],     // requests / min / IP
     ];
+    // The request tier is an abuse ceiling that legitimate use cannot reach:
+    // the most a permitted search can cost is ceil(1000 / 100) = 10 batches,
+    // so 30 searches x 10 = 300 per user. The ceiling is double that so the
+    // request tier never cuts an admitted search short, which the >= check
+    // on an exact 300 would have done for a user at the search limit.
 
     // Check every tier before counting anything, so a request refused by one
     // tier is not also charged to another.
+    //
+    // A tier is only CHECKED on the requests it COUNTS. The search tiers do not
+    // count continuation batches, so they must not refuse them either: a user's
+    // 30th search was admitted on its first batch (29 -> 30), and its own second
+    // batch would otherwise read 30 >= 30 and be killed mid-search with a
+    // partial table - refused by the limiter that just approved it.
     foreach ( $limits as &$limit ) {
         $limit['full_key'] = 'fbps_rate_limit_' . sanitize_key( $limit['key'] . '_' . $window );
         // Ensure we're working with integers only (object injection prevention)
         $limit['current'] = absint( get_transient( $limit['full_key'] ) );
 
-        if ( $limit['current'] >= $limit['max'] ) {
+        if ( $limit['count'] && $limit['current'] >= $limit['max'] ) {
             fbps_log_security_event( 'rate_limit_exceeded', [
                 'key' => $limit['key'],
                 'requests' => $limit['current'],
@@ -528,16 +540,19 @@ function fbps_flush_shortcode_cache() {
  * the transient expires, and the only remedy is the CLI clear-cache command.
  *
  * save_post_{post_type} covers create, update, publish and trash (trashing is
- * a status change through wp_update_post). deleted_post covers permanent
- * deletion, and is not type-specific, so it checks the type itself.
+ * a status change through wp_update_post). before_delete_post covers
+ * permanent deletion. It is used rather than deleted_post because the post
+ * still exists when it fires, so get_post() can read the type on every
+ * WordPress version this plugin supports; deleted_post only passes the post
+ * object from 5.5, and on 5.0-5.4 the row is already gone by then.
  */
 add_action( 'save_post_wp_block', 'fbps_flush_pattern_cache' );
-add_action( 'deleted_post', 'fbps_flush_pattern_cache_on_delete', 10, 2 );
+add_action( 'before_delete_post', 'fbps_flush_pattern_cache_on_delete' );
 function fbps_flush_pattern_cache() {
     delete_transient( 'fbps_synced_patterns' );
 }
-function fbps_flush_pattern_cache_on_delete( $post_id, $post = null ) {
-    $post = $post ? $post : get_post( $post_id );
+function fbps_flush_pattern_cache_on_delete( $post_id ) {
+    $post = get_post( $post_id );
     if ( $post && 'wp_block' === $post->post_type ) {
         fbps_flush_pattern_cache();
     }

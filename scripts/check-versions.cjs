@@ -9,9 +9,9 @@
  *
  * The plugin still has no build step; package.json exists only for the NVDA
  * screen-reader harness in tests/e2e-sr and never ships (see .distignore).
- * It is checked anyway, because a version that drifts from the other three is
+ * It is checked anyway, because a version that drifts from the PHP/readme sources is
  * a bug whether or not the file is distributed. It is treated as optional: if
- * package.json is ever removed, the guard falls back to three sources rather
+ * package.json is ever removed, the guard falls back to the PHP/readme sources rather
  * than failing.
  *
  * Modes:
@@ -20,7 +20,7 @@
  *     each other. Exits 1 with a table of mismatches.
  *
  *   node scripts/check-versions.cjs v1.1.3
- *     Tag mode (runs before a wp.org deploy): all three must equal the tag
+ *     Tag mode (runs before a wp.org deploy): every source must equal the tag
  *     (leading "v" stripped). This is what stops a GitHub Release tagged
  *     v1.1.3 from deploying files that still say 1.1.2 — the #1 wp.org
  *     release mistake, because `Stable tag` decides what wp.org serves.
@@ -63,7 +63,7 @@ const versions = {
 };
 
 // package.json is dev-only tooling and may legitimately not exist; when it
-// does, its version is held to the same standard as the other three.
+// does, its version is held to the same standard as the PHP/readme sources.
 const pkgPath = path.join(rootDir, 'package.json');
 if (fs.existsSync(pkgPath)) {
   let pkg;

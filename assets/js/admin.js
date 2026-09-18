@@ -10,9 +10,12 @@
         var allResults = [];
         var allPatternResults = [];
         var allShortcodeResults = [];
-        var currentSearch = null;
-        var currentPatternSearch = null;
-        var currentShortcodeSearch = null;
+        // One token per surface. Each search takes the next value and every
+        // batch callback compares against it, so a response from a cancelled
+        // or superseded search is dropped. Tokens replace the old string
+        // guards, which compared "block || class || anchor" as one string
+        // against block alone and so never matched a class-only search.
+        var searchToken = { block: 0, pattern: 0, shortcode: 0 };
         var blockSearchComplete = false;
         var patternSearchComplete = false;
         var shortcodeSearchComplete = false;
@@ -88,6 +91,23 @@
          * search would export the block results.
          */
         function clearAllResults() {
+            // Cancel any search still in flight on another surface. Each batch
+            // callback checks its own guard and drops the response when it no
+            // longer matches, so a block search that was mid-batch when a
+            // pattern search started cannot repopulate allResults and paint
+            // its table over the pattern results - which would have made the
+            // export produce block data under a pattern filename.
+            searchToken.block++;
+            searchToken.pattern++;
+            searchToken.shortcode++;
+            // A superseded search's responses are dropped, so its own
+            // completion path never runs: put every surface's controls back
+            // to idle here. The search that is starting sets its own busy
+            // state immediately after this returns.
+            $('#fbps-search-button, #fbps-pattern-search-button, #fbps-shortcode-search-button')
+                .prop('disabled', false).attr('aria-busy', 'false');
+            $('#fbps-cancel-button, #fbps-pattern-cancel-button, #fbps-shortcode-cancel-button').hide();
+            $('#fbps-progress, #fbps-pattern-progress, #fbps-shortcode-progress').empty().hide();
             allResults = [];
             allPatternResults = [];
             allShortcodeResults = [];
@@ -206,8 +226,8 @@
             return items.slice().sort(function(a, b) {
                 var av, bv;
                 if (col === 'date') {
-                    av = new Date(a && a.date).getTime();
-                    bv = new Date(b && b.date).getTime();
+                    av = parseMysqlDate(a && a.date);
+                    bv = parseMysqlDate(b && b.date);
                     if (isNaN(av) && isNaN(bv)) return 0;
                     if (isNaN(av)) return 1;
                     if (isNaN(bv)) return -1;
@@ -227,10 +247,27 @@
             return sortResults(items, st.col, st.dir);
         }
 
+        /**
+         * Parse a MySQL DATETIME ("2026-09-18 14:23:01") into a timestamp.
+         *
+         * new Date() on that string is engine-dependent - the space instead of
+         * a "T" is not in the ECMAScript date-time format, and Safari has
+         * returned Invalid Date for it. Where that happened the default sort
+         * silently left rows in ID order while the header still announced
+         * "sorted descending". Parsing the fields explicitly makes the result
+         * the same in every engine. Returns NaN for anything else.
+         */
+        function parseMysqlDate(str) {
+            var m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2}))?$/.exec(String(str || '').trim());
+            if (!m) return NaN;
+            return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
+        }
+
         // Format date to match WordPress admin style
         function formatDate(dateString) {
-            var date = new Date(dateString);
-            if (isNaN(date.getTime())) return dateString;
+            var ts = parseMysqlDate(dateString);
+            if (isNaN(ts)) return dateString;
+            var date = new Date(ts);
 
             var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
             var year = date.getFullYear();
@@ -274,7 +311,7 @@
             return selected && selected.length ? selected : ['post', 'page'];
         }
 
-        function searchBlockBatch(block, postTypes, offset, accumulated, className, anchorName) {
+        function searchBlockBatch(token, block, postTypes, offset, accumulated, className, anchorName) {
             offset = offset || 0;
             accumulated = accumulated || [];
 
@@ -293,6 +330,12 @@
             }
 
             $.post(fbpsData.ajaxUrl, postData, function(response){
+                // Dropped if this search was cancelled or another search started
+                // while the request was in flight. Everything below writes
+                // shared state, so the check has to come first.
+                if (token !== searchToken.block) {
+                    return;
+                }
                 if (!response || typeof response !== 'object') {
                     displayError(fbpsData.i18n.invalidResponseFormat);
                     return;
@@ -325,8 +368,8 @@
                 displayResults(accumulated, !data.has_more);
 
                 // Continue batching if more results
-                if (data.has_more && currentSearch === block) {
-                    searchBlockBatch(block, postTypes, data.next_offset, accumulated, className, anchorName);
+                if (data.has_more) {
+                    searchBlockBatch(token, block, postTypes, data.next_offset, accumulated, className, anchorName);
                 } else {
                     $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-search-button'));
@@ -477,8 +520,8 @@
                 return;
             }
 
-            currentSearch = block || className || anchorName;
             clearAllResults();
+            var token = searchToken.block;   // clearAllResults() advanced it; this search owns the new value
             $('#fbps-export-button').hide();
             $('#fbps-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-cancel-button').show();
@@ -486,7 +529,7 @@
             updateProgress(0);
 
             ensureFreshNonce(function() {
-                searchBlockBatch(block, getSelectedPostTypes(), 0, [], className, anchorName);
+                searchBlockBatch(token, block, getSelectedPostTypes(), 0, [], className, anchorName);
             });
         }
 
@@ -496,7 +539,7 @@
 
         // Cancel block search
         $('#fbps-cancel-button').on('click', function(){
-            currentSearch = null;
+            searchToken.block++;   // in-flight responses will see a stale token and drop
             $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-search-button'));
             $('#fbps-cancel-button').hide();
@@ -511,11 +554,14 @@
             // Build CSV header from visible columns + View Link, using the same
             // translated labels as the table so the two never disagree.
             var headerParts = [];
+            // Quoted like the data rows: the labels are translatable now, and a
+            // locale whose label contains a comma or a quote would otherwise
+            // shift the header against the columns.
             cols.forEach(function(col) {
                 var def = columnDefs[col];
-                headerParts.push(sanitizeCsvValue(def ? fbpsData.i18n[def.label] : col));
+                headerParts.push('"' + sanitizeCsvValue(def ? fbpsData.i18n[def.label] : col) + '"');
             });
-            headerParts.push(sanitizeCsvValue(fbpsData.i18n.viewLink));
+            headerParts.push('"' + sanitizeCsvValue(fbpsData.i18n.viewLink) + '"');
             var csv = headerParts.join(',') + '\n';
 
             var filename = '';
@@ -582,7 +628,7 @@
             return selected && selected.length ? selected : ['post', 'page'];
         }
 
-        function searchPatternBatch(patternId, postTypes, offset, accumulated) {
+        function searchPatternBatch(token, patternId, postTypes, offset, accumulated) {
             offset = offset || 0;
             accumulated = accumulated || [];
 
@@ -593,6 +639,12 @@
                 batch_offset: offset,
                 _ajax_nonce: currentNonce
             }, function(response){
+                // Dropped if this search was cancelled or another search started
+                // while the request was in flight. Everything below writes
+                // shared state, so the check has to come first.
+                if (token !== searchToken.pattern) {
+                    return;
+                }
                 if (!response || typeof response !== 'object') {
                     displayPatternError(fbpsData.i18n.invalidResponseFormat);
                     return;
@@ -625,8 +677,8 @@
                 displayPatternResults(accumulated, !data.has_more);
 
                 // Continue batching if more results
-                if (data.has_more && currentPatternSearch === patternId) {
-                    searchPatternBatch(patternId, postTypes, data.next_offset, accumulated);
+                if (data.has_more) {
+                    searchPatternBatch(token, patternId, postTypes, data.next_offset, accumulated);
                 } else {
                     $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-pattern-search-button'));
@@ -689,8 +741,8 @@
                 return;
             }
 
-            currentPatternSearch = patternId;
             clearAllResults();
+            var token = searchToken.pattern;
             $('#fbps-export-button').hide();
             $('#fbps-pattern-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-pattern-cancel-button').show();
@@ -698,7 +750,7 @@
             updatePatternProgress(0);
 
             ensureFreshNonce(function() {
-                searchPatternBatch(patternId, getSelectedPatternPostTypes(), 0, []);
+                searchPatternBatch(token, patternId, getSelectedPatternPostTypes(), 0, []);
             });
         }
 
@@ -709,7 +761,7 @@
 
         // Cancel pattern search
         $('#fbps-pattern-cancel-button').on('click', function(){
-            currentPatternSearch = null;
+            searchToken.pattern++;
             $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-pattern-search-button'));
             $('#fbps-pattern-cancel-button').hide();
@@ -725,7 +777,7 @@
             return selected && selected.length ? selected : ['post', 'page'];
         }
 
-        function searchShortcodeBatch(shortcodeName, postTypes, offset, accumulated) {
+        function searchShortcodeBatch(token, shortcodeName, postTypes, offset, accumulated) {
             offset = offset || 0;
             accumulated = accumulated || [];
 
@@ -736,6 +788,12 @@
                 batch_offset:   offset,
                 _ajax_nonce:    currentNonce
             }, function(response){
+                // Dropped if this search was cancelled or another search started
+                // while the request was in flight. Everything below writes
+                // shared state, so the check has to come first.
+                if (token !== searchToken.shortcode) {
+                    return;
+                }
                 if (!response || typeof response !== 'object') {
                     displayShortcodeError(fbpsData.i18n.invalidResponseFormat);
                     return;
@@ -768,8 +826,8 @@
                 displayShortcodeResults(accumulated, !data.has_more);
 
                 // Continue batching if more results
-                if (data.has_more && currentShortcodeSearch === shortcodeName) {
-                    searchShortcodeBatch(shortcodeName, postTypes, data.next_offset, accumulated);
+                if (data.has_more) {
+                    searchShortcodeBatch(token, shortcodeName, postTypes, data.next_offset, accumulated);
                 } else {
                     $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-shortcode-search-button'));
@@ -832,8 +890,8 @@
                 return;
             }
 
-            currentShortcodeSearch = shortcodeName;
             clearAllResults();
+            var token = searchToken.shortcode;
             $('#fbps-export-button').hide();
             $('#fbps-shortcode-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-shortcode-cancel-button').show();
@@ -841,7 +899,7 @@
             updateShortcodeProgress(0);
 
             ensureFreshNonce(function() {
-                searchShortcodeBatch(shortcodeName, getSelectedShortcodePostTypes(), 0, []);
+                searchShortcodeBatch(token, shortcodeName, getSelectedShortcodePostTypes(), 0, []);
             });
         }
 
@@ -852,7 +910,7 @@
 
         // Cancel shortcode search
         $('#fbps-shortcode-cancel-button').on('click', function(){
-            currentShortcodeSearch = null;
+            searchToken.shortcode++;
             $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-shortcode-search-button'));
             $('#fbps-shortcode-cancel-button').hide();

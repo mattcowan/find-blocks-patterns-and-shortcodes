@@ -4,7 +4,7 @@ Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
 Tested up to: 7.0
 Requires PHP: 7.0
-Stable tag: 1.1.4
+Stable tag: 1.1.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -87,10 +87,14 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 
 == Changelog ==
 
-= 1.1.4 =
-* Fixed Export CSV writing the results of an earlier search. If you did a block search and then a pattern search, the export gave you the block results.
-* Synced pattern search now uses the WordPress block parser instead of a text search. It finds patterns that use pattern overrides or a renamed instance, which the text search missed.
-* Fixed the results table showing a "sorted by date" state that was not true. Results now start sorted by date, newest first, in the table and in the CSV export.
+= 1.1.3 =
+* Fixed synced pattern search, which could not find any content. The search now uses the WordPress block parser instead of a text match, so it also finds patterns that use pattern overrides or a renamed instance.
+* Fixed posts with no title being left out of the results table. The result count and the CSV export included them, so the three did not agree. Posts with no title now show as "(no title)".
+* Fixed the Export CSV button, which did not appear after a pattern search or a shortcode search.
+* A failed batch no longer discards the results that were already found. The results stay on screen with a message that the search stopped early.
+* The column checkboxes no longer move the keyboard focus to the results when you change them.
+* The field hints are now read out with the field they describe.
+* Empty result areas are no longer announced as landmarks.
 * The Title column in the CSV export now says "(no title)" for a post with no title, the same as the table.
 * A screen reader no longer reads the full results table each time you change a column or sort it. The plugin now says only how many results it found.
 * The search results no longer take the keyboard focus when they load.
@@ -102,19 +106,9 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 * A new synced pattern now appears in the pattern list at once. Before, it could take up to five minutes.
 * The View and Edit links in all three results tables now show the same focus outline.
 * The rate limit now counts searches, not the batches inside a search. A second, higher limit still counts every request. The limit also no longer extends your wait time each time you try again.
-* The CSV export now uses the same sort order as the table, also after you sort by a column.
 * A shortcode from a plugin you activate now appears in the shortcode list at once.
 * The plugin no longer sends the X-XSS-Protection header. Browsers no longer use it.
-
-= 1.1.3 =
-* Fixed synced pattern search, which could not find any content. WordPress writes a pattern reference as a self-closing block comment, and the search did not accept that form.
-* Fixed posts with no title being left out of the results table. The result count and the CSV export included them, so the three did not agree. Posts with no title now show as "(no title)".
-* Fixed the Export CSV button, which did not appear after a pattern search or a shortcode search.
-* A failed batch no longer discards the results that were already found. The results stay on screen with a message that the search stopped early.
-* The column checkboxes no longer move the keyboard focus to the results when you change them.
-* Sortable column headers now tell a screen reader the sort direction, and they are buttons instead of links.
-* The field hints are now read out with the field they describe.
-* Empty result areas are no longer announced as landmarks.
+* Sortable column headers are now buttons, they tell a screen reader the sort direction, and results start sorted by date, newest first. The CSV export uses the same order as the table, also after you sort by a column.
 
 = 1.1.2 =
 * Added `rel="noopener noreferrer"` to the View and Edit result links to harden against reverse-tabnabbing
