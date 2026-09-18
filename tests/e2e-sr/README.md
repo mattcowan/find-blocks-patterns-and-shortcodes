@@ -24,10 +24,14 @@ projects, so you can usually skip the NVDA step.
 Create `.env` in the plugin root. It is gitignored.
 
 ```
+# QA_BASE_URL wins if both are set; either one is enough.
+QA_BASE_URL=http://typography-stylist:8080
 WP_BASE_URL=http://typography-stylist:8080
 WP_USERNAME=matt
 WP_PASSWORD=pass
 ```
+
+The login and the journeys resolve the site the same way (`QA_BASE_URL`, then `WP_BASE_URL`, then the built-in default), so `auth.json` is always written for the origin the journeys visit.
 
 `global-setup.js` logs in with headless Chromium and saves the cookies to
 `auth.json`. It refuses to post the password over plain HTTP unless the host
@@ -50,7 +54,7 @@ Each journey takes one to two minutes. Spoken-phrase logs are written to
 
 | File | What it settles |
 |---|---|
-| `block-search.sr.spec.js` | The primary flow. Every form control announces a name, the four field hints are read with their control (F8), and the results container does not dump the whole table into one phrase (F7). |
+| `block-search.sr.spec.js` | The primary flow. Every form control announces a name; the two hints on this form (HTML Anchor and Post Types) are announced with their control (F8); the completion phrase is short and says how many results were found (F7). |
 | `results-table.sr.spec.js` | Column toggles keep focus on the checkbox (F5); sortable headers are buttons in `th[scope][aria-sort]` and announce their direction (F6). |
 | `landmarks-and-empty-state.sr.spec.js` | Empty results containers are not landmarks, and role and `aria-label` are applied together only when a container fills (F15). |
 

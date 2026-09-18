@@ -16,6 +16,20 @@ const dns = require('dns').promises;
 const net = require('net');
 const path = require('path');
 
+/**
+ * The base URL and the environment variable it came from, resolved the same
+ * way playwright.nvda.config.js resolves it (QA_BASE_URL wins). The variable
+ * name goes into error messages so an operator debugging a bad URL is pointed
+ * at the one they actually set.
+ */
+const DEFAULT_BASE_URL = 'http://typography-stylist:8080';
+function resolveBaseUrl() {
+  if (process.env.QA_BASE_URL) return { baseURL: process.env.QA_BASE_URL, sourceVar: 'QA_BASE_URL' };
+  if (process.env.WP_BASE_URL) return { baseURL: process.env.WP_BASE_URL, sourceVar: 'WP_BASE_URL' };
+  return { baseURL: DEFAULT_BASE_URL, sourceVar: 'the default base URL (set QA_BASE_URL or WP_BASE_URL)' };
+}
+function baseUrlSourceVar() { return resolveBaseUrl().sourceVar; }
+
 /** Loopback addresses: the only hosts where cleartext HTTP never leaves the machine. */
 function isLoopbackAddress(address) {
   const a = String(address || '').toLowerCase().replace(/^\[|\]$/g, '');
@@ -46,16 +60,16 @@ async function resolveLoopbackAddresses(hostname, lookup = dns.lookup) {
  *
  * @return {{ pinned: string|null }} The loopback address to pin, or null when nothing needs pinning.
  */
-async function assertSafeBaseUrl(baseURL, lookup = dns.lookup) {
+async function assertSafeBaseUrl(baseURL, lookup = dns.lookup, sourceVar = baseUrlSourceVar()) {
   const url = new URL(baseURL);
   if (url.protocol === 'https:') return { pinned: null };
   if (url.protocol !== 'http:') {
-    throw new Error(`WP_BASE_URL must be http(s): ${baseURL}`);
+    throw new Error(`${sourceVar} must be http(s): ${baseURL}`);
   }
   if (process.env.WP_ALLOW_HTTP === '1') return { pinned: null };
   const addresses = await resolveLoopbackAddresses(url.hostname, lookup);
   if (!addresses) {
-    throw new Error(`WP_BASE_URL uses plain HTTP for a host that does not resolve to loopback (${url.hostname}). Use https://, or set WP_ALLOW_HTTP=1 for a trusted intranet host.`);
+    throw new Error(`${sourceVar} uses plain HTTP for a host that does not resolve to loopback (${url.hostname}). Use https://, or set WP_ALLOW_HTTP=1 for a trusted intranet host.`);
   }
   const literal = net.isIP(url.hostname.replace(/^\[|\]$/g, '')) || url.hostname.toLowerCase() === 'localhost';
   // Prefer IPv4: hosts files usually map a name to both ::1 and 127.0.0.1,
@@ -82,7 +96,7 @@ module.exports = async () => {
   // Resolved the same way as playwright.nvda.config.js. auth.json is
   // origin-scoped, so logging in to a different origin than the journeys
   // navigate to would run every journey logged out.
-  const baseURL = process.env.QA_BASE_URL || process.env.WP_BASE_URL || 'http://typography-stylist:8080';
+  const { baseURL } = resolveBaseUrl();
   const username = process.env.WP_USERNAME;
   const password = process.env.WP_PASSWORD;
   if (!username || !password) {
@@ -133,3 +147,4 @@ module.exports.isLoopbackAddress = isLoopbackAddress;
 module.exports.resolveLoopbackAddresses = resolveLoopbackAddresses;
 module.exports.assertSafeBaseUrl = assertSafeBaseUrl;
 module.exports.buildChromiumArgs = buildChromiumArgs;
+module.exports.resolveBaseUrl = resolveBaseUrl;

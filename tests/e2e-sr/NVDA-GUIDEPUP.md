@@ -17,14 +17,15 @@ The portable NVDA lands in `%LOCALAPPDATA%\guidepup\nvda\`. Check that folder be
 
 ## Project files
 
-If the project's package.json has `"type": "module"`, save every file below with a `.cjs` extension (`playwright.nvda.config.cjs`, `tests/e2e-sr/sr-core.cjs`, `helpers.cjs`, `*.sr.spec.cjs`) and adjust `testMatch`; the templates are CommonJS.
+Everything is already in place in this repository:
 
-In this folder:
+- `playwright.nvda.config.js` at the plugin root: own `testDir` (`tests/e2e-sr`), one worker, headed Firefox, `screenReaderConfig` from `@guidepup/playwright`. The base URL, `storageState` and `globalSetup` are set in the project block at the top of the file.
+- `tests/e2e-sr/sr-core.js`: the generic Guidepup mechanics (`focusBrowser`, `press`, `tabUntil`, `activate`, `saveSpeechLog`, ...).
+- `tests/e2e-sr/helpers.js`: what this plugin's page needs on top of that, and the window-title regex.
+- `tests/e2e-sr/global-setup.js`: the WordPress login that writes `auth.json`.
+- `npm run test:sr` in `package.json`; `tests/e2e-sr/logs/`, `playwright-report-sr/`, `test-results/`, `auth.json` and `.env` are gitignored.
 
-- `playwright.nvda.config.js` — own `testDir` (`tests/e2e-sr`), `workers: 1`, headed Firefox, `screenReaderConfig` from `@guidepup/playwright`. Base URL and optional `storageState` / `globalSetup` / `webServer` come from env or from the small project block at the top of the file.
-- `sr-core.js` — copy to `tests/e2e-sr/sr-core.js`. The skill-specific `helpers.js` requires it and adds what the product needs (a WordPress login and block helpers; an app's route/state seeding).
-
-Add `"test:sr": "playwright test -c playwright.nvda.config.js"` to `package.json`. Gitignore `tests/e2e-sr/logs/`, `playwright-report-sr/`, `test-results/` and any saved auth state.
+If `package.json` ever gains `"type": "module"`, rename these files to `.cjs` and adjust `testMatch`; they are CommonJS.
 
 ## How Guidepup captures speech (this shapes every journey)
 
@@ -58,9 +59,9 @@ It is fine for the screen-reader assertions to fail on the first run; they encod
 
 ## Traps
 
-- **A dialog that opens with a large control set can be silent on entry.** NVDA on Firefox read nothing when a `<dialog>` held ~100 buttons at `showModal()` time, but read the full name and description with 10 (POURcast, 2026-09-17). The focus report (NVDA+Tab) still worked, so it is not a focus bug. Fix on the app side: mount the grid ~250 ms after open (a 0 ms deferral was not enough), then move focus into it. Diagnose by temporarily rendering fewer controls.
-- **The title regex must not match your editor's window.** VS Code titles itself "<file> - <folder> - Visual Studio Code", so a loose `/pourcast/i` matched the editor and every NVDA keystroke went into the Claude chat box (one Enter was sent before the run was stopped, 2026-09-16). Match a phrase only the page title has (its tagline), and rely on `focusBrowser`'s second check, `document.hasFocus()`. Send keys only through `press(page, nvda, key)`, which refuses when the page has lost OS focus.
-- **`document.hasFocus()` is not a reliable "browser is in front" signal under Playwright.** Headed Firefox reported `true` while VS Code and Chrome were the foreground windows (2026-09-16). `focusBrowser` therefore requires the NVDA-reported window title to match; `press()`'s hasFocus check is a cheap extra, not the protection. If the desktop may be in use, do not run journeys at all.
+- **A dialog that opens with a large control set can be silent on entry.** NVDA on Firefox has read nothing when a `<dialog>` held ~100 buttons at `showModal()` time, but read the full name and description with 10. The focus report (NVDA+Tab) still worked, so it is not a focus bug. Fix on the app side: mount the large control set shortly after open (a 0 ms deferral was not enough; ~250 ms was), then move focus into it. Diagnose by temporarily rendering fewer controls. This plugin has no dialogs; the trap is kept because the harness is reusable.
+- **The title regex must not match your editor's window.** An editor titles its window "<file> - <folder> - <editor name>", so a loose regex on the project's name matches the editor and every NVDA keystroke is typed into it instead of the browser. Match a phrase only the page title has, and rely on `focusBrowser`'s second check, `document.hasFocus()`. Send keys only through `press(page, nvda, key)`, which refuses when the page has lost OS focus. `helpers.TITLE` in this folder is written that way.
+- **`document.hasFocus()` is not a reliable "browser is in front" signal under Playwright.** Headed Firefox has reported `true` while an editor and another browser were the foreground windows. `focusBrowser` therefore requires the NVDA-reported window title to match; `press()`'s hasFocus check is a cheap extra, not the protection. If the desktop may be in use, do not run journeys at all.
 - **An aborted run leaves the portable NVDA running** (Guidepup only stops the instance it spawned; a killed runner cannot). Quit it with `%LOCALAPPDATA%\guidepup\nvda\all\<version>\extracted\nvda.exe -q` before the next run; `nvda.stop()` reports "NVDA is not running" for an orphan.
 - **The mode toggle (NVDA+Space) is silent in Guidepup's profile** (audio indication only). Do not branch on its phrase; probe the widget instead (did ArrowRight move the selection?). `ensureFocusMode` in `sr-core.js` does this.
 - **NVDA consumes the first Escape** when it uses it to leave focus mode; the dialog closes on the second. Record how many it took rather than asserting one.
