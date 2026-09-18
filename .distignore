@@ -25,6 +25,18 @@
 /.gitignore
 /.gitattributes
 /.distignore
+/.env
+/.env.example
+
+# --- screen-reader (NVDA) test harness: dev only, never ships ---
+/package.json
+/package-lock.json
+/node_modules
+/playwright.nvda.config.js
+/tests
+/playwright-report-sr
+/test-results
+/private
 
 # --- docs that live on GitHub, not in the distributed plugin ---
 # (readme.txt DOES ship — it is the WordPress.org listing.)

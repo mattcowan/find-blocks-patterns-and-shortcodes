@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.1.2
+ * Version:     1.1.3
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.1.2' );
+define( 'FBPS_VERSION', '1.1.3' );
 
 /**
  * Plugin activation - register custom capability.
@@ -147,6 +147,7 @@ function fbps_enqueue_admin_assets( $hook ) {
 				'foundSoFar'            => __( 'found so far...', 'find-blocks-patterns-shortcodes' ),
 				'found'                 => __( 'found', 'find-blocks-patterns-shortcodes' ),
 				'title'                 => __( 'Title', 'find-blocks-patterns-shortcodes' ),
+				'noTitle'               => __( '(no title)', 'find-blocks-patterns-shortcodes' ),
 				'type'                  => __( 'Type', 'find-blocks-patterns-shortcodes' ),
 				'date'                  => __( 'Date', 'find-blocks-patterns-shortcodes' ),
 				'actions'               => __( 'Actions', 'find-blocks-patterns-shortcodes' ),
@@ -157,6 +158,7 @@ function fbps_enqueue_admin_assets( $hook ) {
 				'unknownError'          => __( 'Unknown error', 'find-blocks-patterns-shortcodes' ),
 				'networkError'          => __( 'Network error. Please try again.', 'find-blocks-patterns-shortcodes' ),
 				'searchCancelled'       => __( 'Search cancelled.', 'find-blocks-patterns-shortcodes' ),
+				'partialResults'        => __( 'The search stopped early. These are the results found before it stopped.', 'find-blocks-patterns-shortcodes' ),
 				'noBlockResults'        => __( 'No content found using that block.', 'find-blocks-patterns-shortcodes' ),
 				'noPatternResults'      => __( 'No content found using that synced pattern.', 'find-blocks-patterns-shortcodes' ),
 				'noShortcodeResults'    => __( 'No content found using that shortcode.', 'find-blocks-patterns-shortcodes' ),
@@ -438,8 +440,16 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
     $matches = [];
     $start_time = microtime( true );
 
-    // Build regex pattern to find wp:block with ref attribute
-    $ref_pattern = '/<!--\s+wp:block\s+\{[^}]*"ref"\s*:\s*' . $pattern_id . '[^}]*\}\s+-->/';
+    // Build regex pattern to find wp:block with ref attribute.
+    //
+    // core/block has no inner content, so WordPress always serializes a synced
+    // pattern reference as a void block: <!-- wp:block {"ref":12} /-->. The
+    // optional \/? is therefore required, not defensive - without it this never
+    // matches anything. \s* rather than \s+ also allows "{"ref":12}/-->".
+    //
+    // (?!\d) stops pattern 12 from matching a reference to pattern 120, which
+    // the trailing [^}]* would otherwise swallow.
+    $ref_pattern = '/<!--\s+wp:block\s+\{[^}]*"ref"\s*:\s*' . $pattern_id . '(?!\d)[^}]*\}\s*\/?-->/';
 
     foreach ( $ids as $post_id ) {
         // Timeout protection
@@ -776,21 +786,21 @@ function fbps_render_admin_page() {
             <div class="fbps-search-field">
                 <label for="fbps-anchor-name"><?php esc_html_e( 'HTML Anchor:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <input type="text" id="fbps-anchor-name" class="fbps-search-input" placeholder="<?php esc_attr_e( 'e.g. my-section', 'find-blocks-patterns-shortcodes' ); ?>">
-                    <small class="description"><?php esc_html_e( 'Optional — search by class or anchor alone, or combine with a block name.', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <input type="text" id="fbps-anchor-name" class="fbps-search-input" aria-describedby="fbps-anchor-name-desc" placeholder="<?php esc_attr_e( 'e.g. my-section', 'find-blocks-patterns-shortcodes' ); ?>">
+                    <small class="description" id="fbps-anchor-name-desc"><?php esc_html_e( 'Optional — search by class or anchor alone, or combine with a block name.', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-field">
                 <label for="fbps-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <select id="fbps-post-types" class="fbps-post-types-select" multiple size="4">
+                    <select id="fbps-post-types" class="fbps-post-types-select" aria-describedby="fbps-post-types-desc" multiple size="4">
                         <?php foreach ( $post_types as $post_type ) : ?>
                             <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
                                 <?php echo esc_html( $post_type->label ); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <small class="description" id="fbps-post-types-desc"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-actions">
@@ -821,14 +831,14 @@ function fbps_render_admin_page() {
             <div class="fbps-search-field">
                 <label for="fbps-pattern-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <select id="fbps-pattern-post-types" class="fbps-post-types-select" multiple size="4">
+                    <select id="fbps-pattern-post-types" class="fbps-post-types-select" aria-describedby="fbps-pattern-post-types-desc" multiple size="4">
                         <?php foreach ( $post_types as $post_type ) : ?>
                             <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
                                 <?php echo esc_html( $post_type->label ); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <small class="description" id="fbps-pattern-post-types-desc"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-actions">
@@ -859,14 +869,14 @@ function fbps_render_admin_page() {
             <div class="fbps-search-field">
                 <label for="fbps-shortcode-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <select id="fbps-shortcode-post-types" class="fbps-post-types-select" multiple size="4">
+                    <select id="fbps-shortcode-post-types" class="fbps-post-types-select" aria-describedby="fbps-shortcode-post-types-desc" multiple size="4">
                         <?php foreach ( $post_types as $post_type ) : ?>
                             <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
                                 <?php echo esc_html( $post_type->label ); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <small class="description" id="fbps-shortcode-post-types-desc"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-actions">
@@ -888,26 +898,27 @@ function fbps_render_admin_page() {
             <label><input type="checkbox" class="fbps-col-toggle" value="className"> <?php esc_html_e( 'CSS Class', 'find-blocks-patterns-shortcodes' ); ?></label>
             <label><input type="checkbox" class="fbps-col-toggle" value="anchor"> <?php esc_html_e( 'HTML Anchor', 'find-blocks-patterns-shortcodes' ); ?></label>
         </fieldset>
+        <?php // role="region" and aria-label are added by admin.js only while a
+              // container holds results, so empty containers stay out of the
+              // landmark list. aria-label is prohibited on a div with no role,
+              // so the label waits in data-region-label until it applies. ?>
         <div id="fbps-shortcode-search-results"
              class="fbps-results-container"
-             role="region"
              aria-live="polite"
              aria-atomic="true"
-             aria-label="<?php esc_attr_e( 'Shortcode Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
+             data-region-label="<?php esc_attr_e( 'Shortcode Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
         <div id="fbps-pattern-search-results"
              class="fbps-results-container"
-             role="region"
              aria-live="polite"
              aria-atomic="true"
-             aria-label="<?php esc_attr_e( 'Pattern Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
+             data-region-label="<?php esc_attr_e( 'Pattern Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
         <div id="fbps-search-results"
              class="fbps-results-container"
-             role="region"
              aria-live="polite"
              aria-atomic="true"
-             aria-label="<?php esc_attr_e( 'Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
+             data-region-label="<?php esc_attr_e( 'Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
     </div>
     <?php

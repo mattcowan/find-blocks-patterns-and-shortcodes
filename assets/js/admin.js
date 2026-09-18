@@ -77,6 +77,25 @@
             return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
         }
 
+        // Toggle the landmark role on a results container.
+        //
+        // All three containers exist from first paint, so leaving role="region"
+        // in the markup puts two permanently empty landmarks in the screen
+        // reader's landmark list. The role is only meaningful once the
+        // container actually holds results, so it is applied here instead.
+        function syncResultsRegion($container) {
+            if ($.trim($container.text()).length) {
+                $container.attr({
+                    'role': 'region',
+                    'aria-label': $container.data('region-label') || ''
+                });
+            } else {
+                // aria-label is prohibited on a div with no role, so both come off.
+                $container.removeAttr('role').removeAttr('aria-label');
+            }
+            return $container;
+        }
+
         // Sanitize CSV value to prevent formula injection
         function sanitizeCsvValue(value) {
             value = String(value);
@@ -104,18 +123,21 @@
 
         // Initialize table sorting
         function initTableSort(containerSelector) {
-            $(containerSelector + ' .fbps-results-table th.sortable a').off('click').on('click', function(e){
+            $(containerSelector + ' .fbps-results-table th.sortable .fbps-sort-button').off('click').on('click', function(e){
                 e.preventDefault();
                 var $th = $(this).closest('th');
                 var column = $th.data('column');
                 var $table = $th.closest('table');
                 var isAsc = $th.hasClass('sorted') && $th.hasClass('asc');
 
-                // Remove sorted class from all headers
+                // Remove sorted state from all headers
                 $table.find('th').removeClass('sorted asc desc');
+                $table.find('th.sortable').attr('aria-sort', 'none');
 
-                // Add sorted class to current header
-                $th.addClass('sorted').addClass(isAsc ? 'desc' : 'asc');
+                // Add sorted state to current header
+                var newDir = isAsc ? 'desc' : 'asc';
+                $th.addClass('sorted').addClass(newDir);
+                $th.attr('aria-sort', newDir === 'asc' ? 'ascending' : 'descending');
 
                 // Sort the rows
                 var dataKey = column.toLowerCase();
@@ -241,32 +263,52 @@
                 cols.forEach(function(col) {
                     var def = columnDefs[col];
                     if (def) {
-                        var sortedClass = (col === 'date') ? ' sorted desc' : '';
-                        html += '<th class="sortable' + sortedClass + '" data-column="' + col + '"><a href="#"><span>' + escapeHtml(fbpsData.i18n[def.label]) + '</span><span class="sorting-indicator"></span></a></th>';
+                        var isDefaultSort = (col === 'date');
+                        var sortedClass = isDefaultSort ? ' sorted desc' : '';
+                        // aria-sort carries the sort state for assistive tech; the CSS
+                        // class and the arrow glyph convey it to sighted users only.
+                        var ariaSort = isDefaultSort ? 'descending' : 'none';
+                        html += '<th scope="col" aria-sort="' + ariaSort + '" class="sortable' + sortedClass + '" data-column="' + col + '">' +
+                                '<button type="button" class="fbps-sort-button">' +
+                                '<span>' + escapeHtml(fbpsData.i18n[def.label]) + '</span>' +
+                                '<span class="sorting-indicator" aria-hidden="true"></span>' +
+                                '</button></th>';
                     }
                 });
-                html += '<th>' + escapeHtml(fbpsData.i18n.actions) + '</th>';
+                html += '<th scope="col">' + escapeHtml(fbpsData.i18n.actions) + '</th>';
                 html += '</tr></thead><tbody>';
                 data.forEach(function(item){
-                    if (item && item.edit_link && item.view_link && item.title && item.type && item.date) {
+                    // Render every item the server returned. Guarding on a truthy
+                    // title used to drop untitled posts silently, so the count and
+                    // the CSV export disagreed with the table - and an untitled
+                    // draft is exactly what a content audit needs to find. Each
+                    // action link is emitted only when its URL exists, so a post
+                    // the current user cannot edit still gets a row.
+                    if (item) {
+                        var displayTitle = item.title || fbpsData.i18n.noTitle;
                         html += '<tr';
                         cols.forEach(function(col) {
-                            html += ' data-' + col.toLowerCase() + '="' + escapeHtml(item[col] || '') + '"';
+                            var sortVal = (col === 'title') ? displayTitle : (item[col] || '');
+                            html += ' data-' + col.toLowerCase() + '="' + escapeHtml(sortVal) + '"';
                         });
                         html += '>';
                         cols.forEach(function(col) {
                             var val = item[col] || '';
                             if (col === 'title') {
-                                html += '<td><strong>' + escapeHtml(val) + '</strong></td>';
+                                html += '<td><strong>' + escapeHtml(displayTitle) + '</strong></td>';
                             } else if (col === 'date') {
-                                html += '<td>' + formatDate(val) + '</td>';
+                                html += '<td>' + escapeHtml(formatDate(val)) + '</td>';
                             } else {
                                 html += '<td>' + escapeHtml(val) + '</td>';
                             }
                         });
                         html += '<td>';
-                        html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.view) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank" rel="noopener noreferrer">' + escapeHtml(fbpsData.i18n.view) + '</a> ';
-                        html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.edit) + ' '+ escapeHtml(item.type) +': '+ escapeHtml(item.title) +'" target="_blank" rel="noopener noreferrer">' + escapeHtml(fbpsData.i18n.edit) + '</a>';
+                        if (item.view_link) {
+                            html += '<a href="'+ escapeHtml(item.view_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.view) + ' '+ escapeHtml(item.type || '') +': '+ escapeHtml(displayTitle) +'" target="_blank" rel="noopener noreferrer">' + escapeHtml(fbpsData.i18n.view) + '</a> ';
+                        }
+                        if (item.edit_link) {
+                            html += '<a href="'+ escapeHtml(item.edit_link) +'" class="button button-small" aria-label="' + escapeHtml(fbpsData.i18n.edit) + ' '+ escapeHtml(item.type || '') +': '+ escapeHtml(displayTitle) +'" target="_blank" rel="noopener noreferrer">' + escapeHtml(fbpsData.i18n.edit) + '</a>';
+                        }
                         html += '</td>';
                         html += '</tr>';
                     }
@@ -278,22 +320,42 @@
             return html;
         }
 
-        function displayResults(data, isComplete) {
+        function displayResults(data, isComplete, moveFocus) {
             blockSearchComplete = isComplete;
             var className = $('#fbps-class-name').val();
             var anchorName = $('#fbps-anchor-name').val();
             var noResultsMsg = (className || anchorName) ? fbpsData.i18n.noAttributeResults : fbpsData.i18n.noBlockResults;
             var html = buildResultsTableHtml(data, isComplete, noResultsMsg);
-            $('#fbps-search-results').html(html).attr('tabindex', '-1').focus();
+            var $c = syncResultsRegion($('#fbps-search-results').html(html).attr('tabindex', '-1'));
+            // Only pull focus when a search produced this render. Re-rendering
+            // from a column toggle must leave focus on the checkbox the user
+            // just operated, or they are ejected from the fieldset each time.
+            if (moveFocus !== false) {
+                $c.focus();
+            }
             initTableSort('#fbps-search-results');
         }
 
         function displayError(message) {
             var html = '<div role="alert" class="notice notice-error"><p><strong>' + escapeHtml(fbpsData.i18n.error) + '</strong> '+ message +'</p></div>';
-            $('#fbps-search-results').html(html);
+
+            // Keep what the completed batches already found. Replacing the whole
+            // container used to discard every result gathered before the failure,
+            // which on a large site meant losing hundreds of rows to one blip -
+            // and the retry is itself rate limited.
+            if (allResults.length) {
+                html += '<p class="fbps-partial-notice">' + escapeHtml(fbpsData.i18n.partialResults) + '</p>';
+                html += buildResultsTableHtml(allResults, false, fbpsData.i18n.noBlockResults);
+            }
+
+            syncResultsRegion($('#fbps-search-results').html(html));
+            initTableSort('#fbps-search-results');
             $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             $('#fbps-cancel-button').hide();
             $('#fbps-progress').hide();
+            if (allResults.length) {
+                $('#fbps-export-button').show();
+            }
         }
 
         function searchBlock(block) {
@@ -312,9 +374,9 @@
             $('#fbps-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-cancel-button').show();
             // Clear all result containers
-            $('#fbps-search-results').empty();
-            $('#fbps-pattern-search-results').empty();
-            $('#fbps-shortcode-search-results').empty();
+            syncResultsRegion($('#fbps-search-results').empty());
+            syncResultsRegion($('#fbps-pattern-search-results').empty());
+            syncResultsRegion($('#fbps-shortcode-search-results').empty());
             $('#fbps-progress').show();
             updateProgress(0);
 
@@ -334,7 +396,7 @@
             $('#fbps-cancel-button').hide();
             $('#fbps-progress').hide();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
-            $('#fbps-search-results').html(html);
+            syncResultsRegion($('#fbps-search-results').html(html));
         });
 
         // Unified CSV Export - detects which search type has results
@@ -466,7 +528,7 @@
                     $('#fbps-pattern-cancel-button').hide();
                     $('#fbps-pattern-progress').hide();
                     if (accumulated.length > 0) {
-                        $('#fbps-pattern-export-button').show();
+                        $('#fbps-export-button').show();
                     }
                 }
             }).fail(function() {
@@ -482,19 +544,39 @@
             $('#fbps-pattern-progress').html(html);
         }
 
-        function displayPatternResults(data, isComplete) {
+        function displayPatternResults(data, isComplete, moveFocus) {
             patternSearchComplete = isComplete;
             var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noPatternResults);
-            $('#fbps-pattern-search-results').html(html).attr('tabindex', '-1').focus();
+            var $c = syncResultsRegion($('#fbps-pattern-search-results').html(html).attr('tabindex', '-1'));
+            // Only pull focus when a search produced this render. Re-rendering
+            // from a column toggle must leave focus on the checkbox the user
+            // just operated, or they are ejected from the fieldset each time.
+            if (moveFocus !== false) {
+                $c.focus();
+            }
             initTableSort('#fbps-pattern-search-results');
         }
 
         function displayPatternError(message) {
             var html = '<div role="alert" class="notice notice-error"><p><strong>' + escapeHtml(fbpsData.i18n.error) + '</strong> '+ message +'</p></div>';
-            $('#fbps-pattern-search-results').html(html);
+
+            // Keep what the completed batches already found. Replacing the whole
+            // container used to discard every result gathered before the failure,
+            // which on a large site meant losing hundreds of rows to one blip -
+            // and the retry is itself rate limited.
+            if (allPatternResults.length) {
+                html += '<p class="fbps-partial-notice">' + escapeHtml(fbpsData.i18n.partialResults) + '</p>';
+                html += buildResultsTableHtml(allPatternResults, false, fbpsData.i18n.noPatternResults);
+            }
+
+            syncResultsRegion($('#fbps-pattern-search-results').html(html));
+            initTableSort('#fbps-pattern-search-results');
             $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             $('#fbps-pattern-cancel-button').hide();
             $('#fbps-pattern-progress').hide();
+            if (allPatternResults.length) {
+                $('#fbps-export-button').show();
+            }
         }
 
         function searchPattern(patternId) {
@@ -509,9 +591,9 @@
             $('#fbps-pattern-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-pattern-cancel-button').show();
             // Clear all result containers
-            $('#fbps-search-results').empty();
-            $('#fbps-pattern-search-results').empty();
-            $('#fbps-shortcode-search-results').empty();
+            syncResultsRegion($('#fbps-search-results').empty());
+            syncResultsRegion($('#fbps-pattern-search-results').empty());
+            syncResultsRegion($('#fbps-shortcode-search-results').empty());
             $('#fbps-pattern-progress').show();
             updatePatternProgress(0);
 
@@ -532,7 +614,7 @@
             $('#fbps-pattern-cancel-button').hide();
             $('#fbps-pattern-progress').hide();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
-            $('#fbps-pattern-search-results').html(html);
+            syncResultsRegion($('#fbps-pattern-search-results').html(html));
         });
 
         // ========== SHORTCODE SEARCH FUNCTIONS ==========
@@ -592,7 +674,7 @@
                     $('#fbps-shortcode-cancel-button').hide();
                     $('#fbps-shortcode-progress').hide();
                     if (accumulated.length > 0) {
-                        $('#fbps-shortcode-export-button').show();
+                        $('#fbps-export-button').show();
                     }
                 }
             }).fail(function() {
@@ -608,19 +690,39 @@
             $('#fbps-shortcode-progress').html(html);
         }
 
-        function displayShortcodeResults(data, isComplete) {
+        function displayShortcodeResults(data, isComplete, moveFocus) {
             shortcodeSearchComplete = isComplete;
             var html = buildResultsTableHtml(data, isComplete, fbpsData.i18n.noShortcodeResults);
-            $('#fbps-shortcode-search-results').html(html).attr('tabindex', '-1').focus();
+            var $c = syncResultsRegion($('#fbps-shortcode-search-results').html(html).attr('tabindex', '-1'));
+            // Only pull focus when a search produced this render. Re-rendering
+            // from a column toggle must leave focus on the checkbox the user
+            // just operated, or they are ejected from the fieldset each time.
+            if (moveFocus !== false) {
+                $c.focus();
+            }
             initTableSort('#fbps-shortcode-search-results');
         }
 
         function displayShortcodeError(message) {
             var html = '<div role="alert" class="notice notice-error"><p><strong>' + escapeHtml(fbpsData.i18n.error) + '</strong> '+ message +'</p></div>';
-            $('#fbps-shortcode-search-results').html(html);
+
+            // Keep what the completed batches already found. Replacing the whole
+            // container used to discard every result gathered before the failure,
+            // which on a large site meant losing hundreds of rows to one blip -
+            // and the retry is itself rate limited.
+            if (allShortcodeResults.length) {
+                html += '<p class="fbps-partial-notice">' + escapeHtml(fbpsData.i18n.partialResults) + '</p>';
+                html += buildResultsTableHtml(allShortcodeResults, false, fbpsData.i18n.noShortcodeResults);
+            }
+
+            syncResultsRegion($('#fbps-shortcode-search-results').html(html));
+            initTableSort('#fbps-shortcode-search-results');
             $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             $('#fbps-shortcode-cancel-button').hide();
             $('#fbps-shortcode-progress').hide();
+            if (allShortcodeResults.length) {
+                $('#fbps-export-button').show();
+            }
         }
 
         function searchShortcode(shortcodeName) {
@@ -635,9 +737,9 @@
             $('#fbps-shortcode-search-button').prop('disabled', true).attr('aria-busy', 'true');
             $('#fbps-shortcode-cancel-button').show();
             // Clear all result containers
-            $('#fbps-search-results').empty();
-            $('#fbps-pattern-search-results').empty();
-            $('#fbps-shortcode-search-results').empty();
+            syncResultsRegion($('#fbps-search-results').empty());
+            syncResultsRegion($('#fbps-pattern-search-results').empty());
+            syncResultsRegion($('#fbps-shortcode-search-results').empty());
             $('#fbps-shortcode-progress').show();
             updateShortcodeProgress(0);
 
@@ -658,19 +760,19 @@
             $('#fbps-shortcode-cancel-button').hide();
             $('#fbps-shortcode-progress').hide();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
-            $('#fbps-shortcode-search-results').html(html);
+            syncResultsRegion($('#fbps-shortcode-search-results').html(html));
         });
 
         // Re-render results when column toggles change
         $('.fbps-col-toggle').on('change', function() {
             if (allResults.length > 0) {
-                displayResults(allResults, blockSearchComplete);
+                displayResults(allResults, blockSearchComplete, false);
             }
             if (allPatternResults.length > 0) {
-                displayPatternResults(allPatternResults, patternSearchComplete);
+                displayPatternResults(allPatternResults, patternSearchComplete, false);
             }
             if (allShortcodeResults.length > 0) {
-                displayShortcodeResults(allShortcodeResults, shortcodeSearchComplete);
+                displayShortcodeResults(allShortcodeResults, shortcodeSearchComplete, false);
             }
         });
     });

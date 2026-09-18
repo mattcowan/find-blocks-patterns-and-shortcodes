@@ -13,8 +13,21 @@ Thumbs.db
 Security.md
 .claude/
 
+#Private Directory
+private/
+
 # .zip
 *.zip
 
 Build files
 build/
+
+# Screen-reader test harness output
+node_modules/
+playwright-report-sr/
+test-results/
+tests/e2e-sr/logs/
+tests/e2e-sr/auth.json
+
+# Local credentials for the test harness
+.env

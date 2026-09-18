@@ -4,7 +4,7 @@ Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
 Tested up to: 7.0
 Requires PHP: 7.0
-Stable tag: 1.1.2
+Stable tag: 1.1.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -86,6 +86,16 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 2. Search results table with sortable columns and export csv button
 
 == Changelog ==
+
+= 1.1.3 =
+* Fixed synced pattern search, which could not find any content. WordPress writes a pattern reference as a self-closing block comment, and the search did not accept that form.
+* Fixed posts with no title being left out of the results table. The result count and the CSV export included them, so the three did not agree. Posts with no title now show as "(no title)".
+* Fixed the Export CSV button, which did not appear after a pattern search or a shortcode search.
+* A failed batch no longer discards the results that were already found. The results stay on screen with a message that the search stopped early.
+* The column checkboxes no longer move the keyboard focus to the results when you change them.
+* Sortable column headers now tell a screen reader the sort direction, and they are buttons instead of links.
+* The field hints are now read out with the field they describe.
+* Empty result areas are no longer announced as landmarks.
 
 = 1.1.2 =
 * Added `rel="noopener noreferrer"` to the View and Edit result links to harden against reverse-tabnabbing
