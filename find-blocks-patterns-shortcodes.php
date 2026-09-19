@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // Plugin version constant
 define( 'FBPS_VERSION', '1.1.3' );
-define( 'FBPS_BATCH_SIZE', 100 ); // posts per AJAX batch; the rate limiter derives the expected next offset from it
+define( 'FBPS_BATCH_SIZE', 100 ); // posts scanned per AJAX batch
 
 /**
  * Plugin activation - register custom capability.
@@ -161,6 +161,8 @@ function fbps_enqueue_admin_assets( $hook ) {
 				'networkError'          => __( 'Network error. Please try again.', 'find-blocks-patterns-shortcodes' ),
 				'searchCancelled'       => __( 'Search cancelled.', 'find-blocks-patterns-shortcodes' ),
 				'partialResults'        => __( 'The search stopped early. These are the results found before it stopped.', 'find-blocks-patterns-shortcodes' ),
+				/* translators: 1: number of posts scanned, 2: total number of posts */
+				'truncatedNotice'       => __( 'Searched the first %1$s of %2$s posts. To search more, raise the fbps_query_limit filter (up to 1000).', 'find-blocks-patterns-shortcodes' ),
 				'noBlockResults'        => __( 'No content found using that block.', 'find-blocks-patterns-shortcodes' ),
 				'noPatternResults'      => __( 'No content found using that synced pattern.', 'find-blocks-patterns-shortcodes' ),
 				'noShortcodeResults'    => __( 'No content found using that shortcode.', 'find-blocks-patterns-shortcodes' ),
@@ -347,111 +349,50 @@ function fbps_validate_block_namespace( $block_name ) {
  * Check rate limiting for user and IP.
  */
 /**
- * Normalize a search's endpoint and criteria into one string for the rate
- * limiter's continuation marker. Post types are sorted so the same set in a
- * different order is the same search; everything is cast to string so an
- * int and a numeric string compare equal.
+ * Rate limit search requests per user and per IP.
  *
- * @param string $endpoint 'block', 'pattern' or 'shortcode'.
- * @param array  $criteria The handler's sanitized inputs, in a fixed order.
- * @return string
- */
-function fbps_search_fingerprint( $endpoint, $criteria ) {
-    $parts = [ (string) $endpoint ];
-    foreach ( $criteria as $value ) {
-        if ( is_array( $value ) ) {
-            $value = array_map( 'strval', $value );
-            sort( $value, SORT_STRING );
-            $value = implode( ',', $value );
-        }
-        $parts[] = (string) $value;
-    }
-    return implode( '|', $parts );
-}
-
-/**
- * Rate limit searches per user and per IP.
+ * One counter per identity, incremented by every request, in a fixed
+ * calendar-minute bucket. That is all. A search of up to 1000 posts is up to
+ * ten requests, so the ceilings are set so that a user re-running full
+ * searches back to back cannot reach them (about 30 requests a minute is the
+ * realistic maximum), while a client hammering the endpoint is cut off well
+ * before it can cost the server much: each request is bounded to one batch
+ * of at most FBPS_BATCH_SIZE posts by the query limit in the search helpers.
  *
- * Two things about how this counts:
+ * Trade-off, accepted on purpose: because every batch counts, a very heavy
+ * legitimate burst could hit the ceiling part-way through a search. The UI
+ * keeps the results already found on screen and exportable, and says the
+ * search stopped early; the client can retry a minute later.
  *
- * 1. It counts SEARCHES in one tier and REQUESTS in another. A search of up
- *    to 1000 posts is up to ten AJAX requests, so counting every request
- *    meant "30 per minute" was really three to six searches. The search tier
- *    is incremented by a search's first batch and by any request that is not
- *    a recognized continuation (note 3). The request tier counts every batch
- *    at a higher ceiling (double what 30 full searches can cost), so a search
- *    the limiter admitted is never cut short.
+ * Deliberately no "searches versus batches" distinction and no continuation
+ * state. An earlier version tried to count searches by trusting or validating
+ * the client's batch_offset, and every refinement of that opened another way
+ * to be classified as a continuation. Counting every request leaves nothing
+ * to classify.
  *
- * 2. The window is a fixed calendar minute, keyed on the current UTC minute.
- *    The previous sliding version called set_transient() on every request,
- *    which reset the expiry each time, so a user who kept retrying kept
- *    pushing their own unlock time back. A bucket key simply rolls over.
+ * The bucket key includes the current UTC minute, so the window rolls over
+ * on its own and a refused retry does not push the unlock time back. Both
+ * counters are checked before either is incremented, so a request refused by
+ * one is not charged to the other.
  *
- * 3. The client-supplied batch_offset is not trusted to say which requests are
- *    continuations. A first batch (offset 0) opens a short-lived marker that
- *    is bound to THIS search - the user, the endpoint and the normalized
- *    criteria - and records the next offset the server expects. A later
- *    request is a continuation only when a marker exists for the same search
- *    and asks for exactly that offset; it then advances the marker. Anything
- *    else with a nonzero offset - a different endpoint, different criteria,
- *    an offset out of sequence, or no open search at all - is counted as a
- *    new search and does not open a marker. So a client that only ever sends
- *    continuation offsets, or that opens one real search and then hammers
- *    another endpoint under it, is held to the search limit like anyone else,
- *    while a real search's batches are never counted twice.
- *
- * @param int    $batch_offset The offset this request asks for; 0 starts a search.
- * @param string $fingerprint  Endpoint plus normalized criteria, from the handler.
  * @return true|WP_Error
  */
-function fbps_check_rate_limit( $batch_offset = 0, $fingerprint = '' ) {
-    $user_id = get_current_user_id();
-    $client_ip = fbps_get_client_ip();
+function fbps_check_rate_limit() {
+    $uid = absint( get_current_user_id() );
+    $iph = md5( fbps_get_client_ip() );
     $window = gmdate( 'YmdHi' );
-    $uid = absint( $user_id );
-    $iph = md5( $client_ip );
-    $batch_offset = absint( $batch_offset );
 
-    // Which requests count toward the search tier - see note 3 above. The
-    // marker key is the user (or IP when there is no user) plus a hash of the
-    // endpoint and criteria; its value is the next offset this search may ask
-    // for. Continuation requires both an exact key and an exact offset.
-    $open_key = 'fbps_search_open_' . md5( ( $uid ? 'user_' . $uid : 'ip_' . $iph ) . '|' . (string) $fingerprint );
-    $is_first_batch = ( 0 === $batch_offset );
-    $expected_offset = $is_first_batch ? null : get_transient( $open_key );
-    $is_continuation = ! $is_first_batch && false !== $expected_offset && absint( $expected_offset ) === $batch_offset;
-    $count_it = ! $is_continuation;
-
-    // Two tiers. The search tier counts only a search's first batch, so the
-    // numbers mean what a user would expect. The request tier counts every
-    // batch, so raw request volume stays bounded even for a client that only
-    // ever sends continuation offsets.
     $limits = [
-        [ 'key' => 'user_' . $uid,     'max' => 30,  'count' => $count_it ], // searches / min / user
-        [ 'key' => 'ip_' . $iph,       'max' => 50,  'count' => $count_it ], // searches / min / IP
-        [ 'key' => 'req_user_' . $uid, 'max' => 600,  'count' => true ],     // requests / min / user
-        [ 'key' => 'req_ip_' . $iph,   'max' => 1000, 'count' => true ],     // requests / min / IP
+        [ 'key' => 'user_' . $uid, 'max' => 120 ], // requests / min / user (12 full ten-batch searches)
+        [ 'key' => 'ip_' . $iph,   'max' => 300 ], // requests / min / IP (a shared address with several editors)
     ];
-    // The request tier is an abuse ceiling that legitimate use cannot reach:
-    // the most a permitted search can cost is ceil(1000 / 100) = 10 batches,
-    // so 30 searches x 10 = 300 per user. The ceiling is double that so the
-    // request tier never cuts an admitted search short, which the >= check
-    // on an exact 300 would have done for a user at the search limit.
 
-    // Check every tier before counting anything, so a request refused by one
-    // tier is not also charged to another.
-    //
-    // A tier is only CHECKED on the requests it COUNTS. The search tiers do not
-    // count continuation batches, so they must not refuse them either: a user's
-    // 30th search was admitted on its first batch (29 -> 30), and its own second
-    // batch would otherwise read 30 >= 30 and be killed mid-search with a
-    // partial table - refused by the limiter that just approved it.
     foreach ( $limits as &$limit ) {
         $limit['full_key'] = 'fbps_rate_limit_' . sanitize_key( $limit['key'] . '_' . $window );
         // Ensure we're working with integers only (object injection prevention)
         $limit['current'] = absint( get_transient( $limit['full_key'] ) );
 
-        if ( $limit['count'] && $limit['current'] >= $limit['max'] ) {
+        if ( $limit['current'] >= $limit['max'] ) {
             fbps_log_security_event( 'rate_limit_exceeded', [
                 'key' => $limit['key'],
                 'requests' => $limit['current'],
@@ -463,24 +404,33 @@ function fbps_check_rate_limit( $batch_offset = 0, $fingerprint = '' ) {
     unset( $limit );
 
     foreach ( $limits as $limit ) {
-        if ( $limit['count'] ) {
-            // Two minutes, not one: a bucket opened at :59 must outlive the
-            // minute it belongs to, and expiry resets are harmless now that
-            // the key itself rotates.
-            set_transient( $limit['full_key'], $limit['current'] + 1, 2 * MINUTE_IN_SECONDS );
-        }
-    }
-
-    // A first batch opens the search; a genuine continuation advances it. In
-    // both cases the marker now holds the ONLY offset the next request may
-    // use. A counted stray must NOT open a marker, or the first uncounted
-    // request would unlock all the rest. Two minutes covers the longest gap
-    // between batches, which is bounded by the 25-second per-batch timeout.
-    if ( $is_first_batch || $is_continuation ) {
-        set_transient( $open_key, $batch_offset + FBPS_BATCH_SIZE, 2 * MINUTE_IN_SECONDS );
+        // Two minutes, not one: a bucket opened at :59 must outlive the minute
+        // it belongs to, and expiry resets are harmless because the key rotates.
+        set_transient( $limit['full_key'], $limit['current'] + 1, 2 * MINUTE_IN_SECONDS );
     }
 
     return true;
+}
+
+/**
+ * The most posts one search may scan.
+ *
+ * Read from the fbps_query_limit filter (default 500, hard cap 1000). A
+ * filter that returns 0, '', or something non-numeric must not switch every
+ * search off: absint() turns all of those into 0, and a limit of 0 makes the
+ * very first batch a terminal empty one - reported to the user as "no
+ * results". Anything below 1 falls back to the default.
+ *
+ * @return int
+ */
+function fbps_get_query_limit() {
+    // (int), not absint(): a negative value is a mistake and must fall back to
+    // the default, not become its absolute value.
+    $limit = (int) apply_filters( 'fbps_query_limit', 500 );
+    if ( $limit < 1 ) {
+        $limit = 500;
+    }
+    return min( $limit, 1000 );
 }
 
 /**
@@ -625,8 +575,17 @@ function fbps_flush_pattern_cache_on_delete( $post_id ) {
  * Returns an array of WP_Post objects that contain the specified synced pattern.
  */
 function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-    $limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-    $limit = min( $limit, 1000 ); // Hard cap at 1000
+    $limit = fbps_get_query_limit();
+
+    // The limit is the most posts one search may scan. An offset at or past
+    // it is a terminal batch; the last batch before it is clamped so the scan
+    // never runs past the limit. Callers read 'scanned' to tell a capped
+    // scan from a genuine end of content.
+    $batch_offset = absint( $batch_offset );
+    if ( $batch_offset >= $limit ) {
+        return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+    }
+    $batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
     // Default to all public post types if none specified
     if ( empty( $post_types ) ) {
@@ -682,8 +641,10 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
 
     return [
         'posts' => $matches,
-        'has_more' => count( $ids ) === $batch_size,
+        'has_more' => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
         'next_offset' => $batch_offset + $batch_size,
+        'scanned' => count( $ids ),
+        'limit' => $limit,
     ];
 }
 
@@ -750,8 +711,17 @@ function fbps_validate_shortcode_name( $shortcode_name ) {
  * Returns an array of WP_Post objects that contain the specified shortcode.
  */
 function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-	$limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-	$limit = min( $limit, 1000 ); // Hard cap at 1000
+	$limit = fbps_get_query_limit();
+
+	// The limit is the most posts one search may scan. An offset at or past
+	// it is a terminal batch; the last batch before it is clamped so the scan
+	// never runs past the limit. Callers read 'scanned' to tell a capped
+	// scan from a genuine end of content.
+	$batch_offset = absint( $batch_offset );
+	if ( $batch_offset >= $limit ) {
+		return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+	}
+	$batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
 	// Default to all public post types if none specified
 	if ( empty( $post_types ) ) {
@@ -805,8 +775,10 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 
 	return [
 		'posts' => $matches,
-		'has_more' => count( $ids ) === $batch_size,
+		'has_more' => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
 		'next_offset' => $batch_offset + $batch_size,
+		'scanned' => count( $ids ),
+		'limit' => $limit,
 	];
 }
 
@@ -822,15 +794,21 @@ function fbps_get_total_posts_count( $post_types = [] ) {
         $post_types = array_map( 'sanitize_key', (array) $post_types );
     }
 
-    $count = wp_count_posts();
+    // Count only the statuses the searches actually scan. The search helpers
+    // query with post_status => 'any', which excludes statuses flagged
+    // exclude_from_search (auto-draft, trash). Summing every status would
+    // overstate the total and could report a scan as truncated when it had
+    // in fact reached the end.
+    $scannable = get_post_stati( [ 'exclude_from_search' => false ] );
     $total = 0;
 
     foreach ( $post_types as $post_type ) {
         $count_obj = wp_count_posts( $post_type );
         if ( $count_obj ) {
-            // Sum all statuses
             foreach ( get_object_vars( $count_obj ) as $status => $count_value ) {
-                $total += (int) $count_value;
+                if ( isset( $scannable[ $status ] ) ) {
+                    $total += (int) $count_value;
+                }
             }
         }
     }
@@ -842,8 +820,17 @@ function fbps_get_total_posts_count( $post_types = [] ) {
  * Returns an array of WP_Post objects that contain the specified block.
  */
 function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-    $limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-    $limit = min( $limit, 1000 ); // Hard cap at 1000
+    $limit = fbps_get_query_limit();
+
+    // The limit is the most posts one search may scan. An offset at or past
+    // it is a terminal batch; the last batch before it is clamped so the scan
+    // never runs past the limit. Callers read 'scanned' to tell a capped
+    // scan from a genuine end of content.
+    $batch_offset = absint( $batch_offset );
+    if ( $batch_offset >= $limit ) {
+        return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+    }
+    $batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
     // Default to all public post types if none specified
     if ( empty( $post_types ) ) {
@@ -897,8 +884,10 @@ function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offse
 
     return [
         'posts' => $matches,
-        'has_more' => count( $ids ) === $batch_size,
+        'has_more' => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
         'next_offset' => $batch_offset + $batch_size,
+        'scanned' => count( $ids ),
+        'limit' => $limit,
     ];
 }
 
@@ -1350,8 +1339,17 @@ function fbps_extract_block_attributes( $post, $class_name = '', $anchor_name = 
  * @return array { posts: WP_Post[], has_more: bool, next_offset: int }
  */
 function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $block_name = '', $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-    $limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-    $limit = min( $limit, 1000 );
+    $limit = fbps_get_query_limit();
+
+    // The limit is the most posts one search may scan. An offset at or past
+    // it is a terminal batch; the last batch before it is clamped so the scan
+    // never runs past the limit. Callers read 'scanned' to tell a capped
+    // scan from a genuine end of content.
+    $batch_offset = absint( $batch_offset );
+    if ( $batch_offset >= $limit ) {
+        return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+    }
+    $batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
     if ( empty( $post_types ) ) {
         $post_types = [ 'post', 'page' ];
@@ -1399,8 +1397,10 @@ function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $bl
 
     return [
         'posts'       => $matches,
-        'has_more'    => count( $ids ) === $batch_size,
+        'has_more'    => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
         'next_offset' => $batch_offset + $batch_size,
+        'scanned'    => count( $ids ),
+        'limit'    => $limit,
     ];
 }
 
@@ -1424,9 +1424,8 @@ function fbps_ajax_search_block() {
         $anchor_name = isset( $_POST['anchor_name'] ) ? sanitize_text_field( wp_unslash( $_POST['anchor_name'] ) ) : '';
         $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
 
-        // Rate limiting with IP tracking. The fingerprint binds a continuation
-        // to this endpoint and these exact criteria (see fbps_check_rate_limit).
-        $rate_check = fbps_check_rate_limit( $batch_offset, fbps_search_fingerprint( 'block', [ $block, $class_name, $anchor_name, $post_types ] ) );
+        // Rate limiting with IP tracking
+        $rate_check = fbps_check_rate_limit();
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
@@ -1523,6 +1522,18 @@ function fbps_ajax_search_block() {
             'progress' => round( $progress, 1 ),
         ];
 
+        // On the last batch, say whether the scan stopped at the query limit
+        // rather than at the end of the content. Batches walk oldest-first, so a
+        // capped scan never reaches the newest posts; without this the UI would
+        // report a confident "no results" for a block used only in recent content.
+        if ( ! $search_result['has_more'] ) {
+            $scanned_total = $batch_offset + $search_result['scanned'];
+            $total_all     = fbps_get_total_posts_count( $post_types );
+            $response['scanned']     = $scanned_total;
+            $response['total_posts'] = $total_all;
+            $response['truncated']   = ( $scanned_total >= $search_result['limit'] ) && ( $total_all > $scanned_total );
+        }
+
         if ( $batch_offset === 0 ) {
             $response['total_posts'] = $total_posts;
         }
@@ -1563,8 +1574,8 @@ function fbps_ajax_search_pattern() {
         $pattern_id = isset( $_POST['pattern_id'] ) ? absint( $_POST['pattern_id'] ) : 0;
         $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
 
-        // Rate limiting with IP tracking, bound to this endpoint and criteria.
-        $rate_check = fbps_check_rate_limit( $batch_offset, fbps_search_fingerprint( 'pattern', [ $pattern_id, $post_types ] ) );
+        // Rate limiting with IP tracking
+        $rate_check = fbps_check_rate_limit();
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
@@ -1621,6 +1632,18 @@ function fbps_ajax_search_pattern() {
             'progress' => round( $progress, 1 ),
         ];
 
+        // On the last batch, say whether the scan stopped at the query limit
+        // rather than at the end of the content. Batches walk oldest-first, so a
+        // capped scan never reaches the newest posts; without this the UI would
+        // report a confident "no results" for a block used only in recent content.
+        if ( ! $search_result['has_more'] ) {
+            $scanned_total = $batch_offset + $search_result['scanned'];
+            $total_all     = fbps_get_total_posts_count( $post_types );
+            $response['scanned']     = $scanned_total;
+            $response['total_posts'] = $total_all;
+            $response['truncated']   = ( $scanned_total >= $search_result['limit'] ) && ( $total_all > $scanned_total );
+        }
+
         if ( $batch_offset === 0 ) {
             $response['total_posts'] = $total_posts;
         }
@@ -1659,8 +1682,8 @@ function fbps_ajax_search_shortcode() {
 		$shortcode_name = isset( $_POST['shortcode_name'] ) ? sanitize_text_field( wp_unslash( $_POST['shortcode_name'] ) ) : '';
 		$post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
 
-		// Rate limiting with IP tracking, bound to this endpoint and criteria.
-		$rate_check = fbps_check_rate_limit( $batch_offset, fbps_search_fingerprint( 'shortcode', [ $shortcode_name, $post_types ] ) );
+		// Rate limiting with IP tracking
+		$rate_check = fbps_check_rate_limit();
 		if ( is_wp_error( $rate_check ) ) {
 			throw new Exception( 'rate_limit' );
 		}
@@ -1728,6 +1751,18 @@ function fbps_ajax_search_shortcode() {
 			'progress' => round( $progress, 1 ),
 		];
 
+		// On the last batch, say whether the scan stopped at the query limit
+		// rather than at the end of the content. Batches walk oldest-first, so a
+		// capped scan never reaches the newest posts; without this the UI would
+		// report a confident "no results" for a block used only in recent content.
+		if ( ! $search_result['has_more'] ) {
+			$scanned_total = $batch_offset + $search_result['scanned'];
+			$total_all     = fbps_get_total_posts_count( $post_types );
+			$response['scanned']     = $scanned_total;
+			$response['total_posts'] = $total_all;
+			$response['truncated']   = ( $scanned_total >= $search_result['limit'] ) && ( $total_all > $scanned_total );
+		}
+
 		if ( $batch_offset === 0 ) {
 			$response['total_posts'] = $total_posts;
 		}
@@ -1781,7 +1816,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
          * : Output format (table, csv, json, ids) (default: table)
          *
          * [--limit=<limit>]
-         * : Maximum number of posts to search (default: 1000)
+         * : Maximum number of posts to scan, oldest first (default: the fbps_query_limit value, 500; hard cap 1000)
          *
          * ## EXAMPLES
          *
@@ -1809,7 +1844,14 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             $format = isset( $assoc_args['format'] ) ? $assoc_args['format'] : 'table';
 
             // Parse limit
-            $limit = isset( $assoc_args['limit'] ) ? absint( $assoc_args['limit'] ) : 1000;
+            // --limit is the number of posts to scan, the same thing the fbps_query_limit
+            // filter controls, so it is applied through that filter for this run. The
+            // accessor still enforces the 1000 hard cap and the >= 1 floor.
+            if ( isset( $assoc_args['limit'] ) ) {
+                $cli_limit = absint( $assoc_args['limit'] );
+                add_filter( 'fbps_query_limit', function () use ( $cli_limit ) { return $cli_limit; } );
+            }
+            $limit = fbps_get_query_limit();
 
             WP_CLI::log( sprintf( 'Searching for block: %s', $block_name ) );
             WP_CLI::log( sprintf( 'Post types: %s', implode( ', ', $post_types ) ) );
@@ -1817,22 +1859,22 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             // Search in batches
             $all_matches = [];
             $offset = 0;
-            $batch_size = 100;
+            $scanned = 0;
 
             do {
-                $result = fbps_get_posts_using_block( $block_name, $post_types, $offset, $batch_size );
+                $result = fbps_get_posts_using_block( $block_name, $post_types, $offset, FBPS_BATCH_SIZE );
                 $all_matches = array_merge( $all_matches, $result['posts'] );
+                $scanned += $result['scanned'];
 
-                WP_CLI::log( sprintf( 'Searched %d posts... found %d matches so far', $offset + $batch_size, count( $all_matches ) ) );
+                WP_CLI::log( sprintf( 'Searched %d posts... found %d matches so far', $scanned, count( $all_matches ) ) );
 
                 $offset = $result['next_offset'];
-
-                // Respect limit
-                if ( count( $all_matches ) >= $limit ) {
-                    break;
-                }
-
             } while ( $result['has_more'] );
+
+            $total_all = fbps_get_total_posts_count( $post_types );
+            if ( $scanned >= $limit && $total_all > $scanned ) {
+                WP_CLI::warning( sprintf( 'Scanned the first %d of %d posts (oldest first). Use --limit, up to 1000, to scan more.', $scanned, $total_all ) );
+            }
 
             WP_CLI::success( sprintf( 'Found %d posts using block: %s', count( $all_matches ), $block_name ) );
 

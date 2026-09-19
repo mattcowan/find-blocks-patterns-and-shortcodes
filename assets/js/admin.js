@@ -16,6 +16,11 @@
         // guards, which compared "block || class || anchor" as one string
         // against block alone and so never matched a class-only search.
         var searchToken = { block: 0, pattern: 0, shortcode: 0 };
+
+        // What the last batch of each surface's search said about coverage.
+        // Set when has_more is false; read by the table builder so the notice
+        // survives re-renders (column toggles, sorts).
+        var searchMeta = { block: null, pattern: null, shortcode: null };
         var blockSearchComplete = false;
         var patternSearchComplete = false;
         var shortcodeSearchComplete = false;
@@ -100,6 +105,9 @@
             searchToken.block++;
             searchToken.pattern++;
             searchToken.shortcode++;
+            searchMeta.block = null;
+            searchMeta.pattern = null;
+            searchMeta.shortcode = null;
             // A superseded search's responses are dropped, so its own
             // completion path never runs: put every surface's controls back
             // to idle here. The search that is starting sets its own busy
@@ -187,10 +195,14 @@
          * The text is screen-reader only. The visible count already sits above
          * the table, so showing it twice would just be noise.
          */
-        function announceSearchComplete($progress, count, noResultsMsg) {
+        function announceSearchComplete($progress, count, noResultsMsg, surface) {
             var msg = count
                 ? count + ' ' + (count === 1 ? fbpsData.i18n.result : fbpsData.i18n.results) + ' ' + fbpsData.i18n.found
                 : noResultsMsg;
+            var m = surface && searchMeta[surface];
+            if (m && m.truncated) {
+                msg += ' ' + fbpsData.i18n.truncatedNotice.replace('%1$s', String(m.scanned)).replace('%2$s', String(m.total));
+            }
             $progress
                 .addClass('fbps-progress-done')
                 .html('<span class="screen-reader-text">' + escapeHtml(msg) + '</span>');
@@ -364,6 +376,10 @@
                 // Update progress
                 updateProgress(accumulated.length);
 
+                if (!data.has_more) {
+                    searchMeta.block = { truncated: !!data.truncated, scanned: data.scanned, total: data.total_posts };
+                }
+
                 // Display current results
                 displayResults(accumulated, !data.has_more);
 
@@ -374,7 +390,7 @@
                     $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-search-button'));
                     $('#fbps-cancel-button').hide();
-                    announceSearchComplete($('#fbps-progress'), accumulated.length, currentNoBlockResultsMsg());
+                    announceSearchComplete($('#fbps-progress'), accumulated.length, currentNoBlockResultsMsg(), 'block');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
                     }
@@ -397,9 +413,18 @@
             $('#fbps-progress').html(html);
         }
 
+        function truncationNotice(surface) {
+            var m = searchMeta[surface];
+            if (!m || !m.truncated) return '';
+            var msg = fbpsData.i18n.truncatedNotice
+                .replace('%1$s', String(m.scanned))
+                .replace('%2$s', String(m.total));
+            return '<div class="notice notice-warning inline fbps-truncated"><p>' + escapeHtml(msg) + '</p></div>';
+        }
+
         function buildResultsTableHtml(data, isComplete, noResultsMsg, surface) {
             var st = sortState[surface] || sortState.block;
-            var html = '';
+            var html = isComplete ? truncationNotice(surface) : '';
             var cols = getVisibleColumns();
             if (data.length) {
                                 // Not a live region: it is injected with the table, and a live
@@ -473,7 +498,7 @@
                 });
                 html += '</tbody></table>';
             } else if (isComplete) {
-                html = '<p>' + escapeHtml(noResultsMsg) + '</p>';
+                html += '<p>' + escapeHtml(noResultsMsg) + '</p>';
             }
             return html;
         }
@@ -683,6 +708,10 @@
                 // Update progress
                 updatePatternProgress(accumulated.length);
 
+                if (!data.has_more) {
+                    searchMeta.pattern = { truncated: !!data.truncated, scanned: data.scanned, total: data.total_posts };
+                }
+
                 // Display current results
                 displayPatternResults(accumulated, !data.has_more);
 
@@ -693,7 +722,7 @@
                     $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-pattern-search-button'));
                     $('#fbps-pattern-cancel-button').hide();
-                    announceSearchComplete($('#fbps-pattern-progress'), accumulated.length, fbpsData.i18n.noPatternResults);
+                    announceSearchComplete($('#fbps-pattern-progress'), accumulated.length, fbpsData.i18n.noPatternResults, 'pattern');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
                     }
@@ -837,6 +866,10 @@
                 // Update progress
                 updateShortcodeProgress(accumulated.length);
 
+                if (!data.has_more) {
+                    searchMeta.shortcode = { truncated: !!data.truncated, scanned: data.scanned, total: data.total_posts };
+                }
+
                 // Display current results
                 displayShortcodeResults(accumulated, !data.has_more);
 
@@ -847,7 +880,7 @@
                     $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-shortcode-search-button'));
                     $('#fbps-shortcode-cancel-button').hide();
-                    announceSearchComplete($('#fbps-shortcode-progress'), accumulated.length, fbpsData.i18n.noShortcodeResults);
+                    announceSearchComplete($('#fbps-shortcode-progress'), accumulated.length, fbpsData.i18n.noShortcodeResults, 'shortcode');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
                     }

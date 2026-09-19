@@ -245,3 +245,7 @@
 .fbps-progress-container.fbps-progress-done {
     margin-top: 0;
 }
+
+.fbps-results-container .fbps-truncated {
+    margin: 0 0 1em;
+}

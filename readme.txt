@@ -105,7 +105,8 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 * The CSV export header row is now translated, the same as the table.
 * A new synced pattern now appears in the pattern list at once. Before, it could take up to five minutes.
 * The View and Edit links in all three results tables now show the same focus outline.
-* The rate limit now counts searches, not the batches inside a search. A second, higher limit still counts every request. The limit also no longer extends your wait time each time you try again.
+* The rate limit now allows a full search of up to 1000 posts. Before, it counted each batch of a search against a limit of 30 a minute, so three or four large searches could lock you out. It also no longer extends your wait time each time you try again.
+* A search now stops at the post limit (500 by default, 1000 at most, set with the `fbps_query_limit` filter). The limit was documented but not applied. This also applies to `wp fbps search`.
 * A shortcode from a plugin you activate now appears in the shortcode list at once.
 * The plugin no longer sends the X-XSS-Protection header. Browsers no longer use it.
 * Sortable column headers are now buttons, they tell a screen reader the sort direction, and results start sorted by date, newest first. The CSV export uses the same order as the table, also after you sort by a column.
