@@ -17,6 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // Plugin version constant
 define( 'FBPS_VERSION', '1.1.3' );
+define( 'FBPS_BATCH_SIZE', 100 ); // posts per AJAX batch; the rate limiter derives the expected next offset from it
 
 /**
  * Plugin activation - register custom capability.
@@ -346,6 +347,29 @@ function fbps_validate_block_namespace( $block_name ) {
  * Check rate limiting for user and IP.
  */
 /**
+ * Normalize a search's endpoint and criteria into one string for the rate
+ * limiter's continuation marker. Post types are sorted so the same set in a
+ * different order is the same search; everything is cast to string so an
+ * int and a numeric string compare equal.
+ *
+ * @param string $endpoint 'block', 'pattern' or 'shortcode'.
+ * @param array  $criteria The handler's sanitized inputs, in a fixed order.
+ * @return string
+ */
+function fbps_search_fingerprint( $endpoint, $criteria ) {
+    $parts = [ (string) $endpoint ];
+    foreach ( $criteria as $value ) {
+        if ( is_array( $value ) ) {
+            $value = array_map( 'strval', $value );
+            sort( $value, SORT_STRING );
+            $value = implode( ',', $value );
+        }
+        $parts[] = (string) $value;
+    }
+    return implode( '|', $parts );
+}
+
+/**
  * Rate limit searches per user and per IP.
  *
  * Two things about how this counts:
@@ -364,18 +388,23 @@ function fbps_validate_block_namespace( $block_name ) {
  *    pushing their own unlock time back. A bucket key simply rolls over.
  *
  * 3. The client-supplied batch_offset is not trusted to say which requests are
- *    continuations. A first batch (offset 0) opens a short-lived "search
- *    open" marker for the user; a later offset counts as a continuation only
- *    while that marker exists, and refreshes it. A nonzero offset with no
- *    open search is counted as a new search. So a client that only ever
- *    sends continuation offsets is held to the search limit like anyone else,
- *    while a real search's batches - which always follow its first batch
- *    within the marker's lifetime - are never counted twice.
+ *    continuations. A first batch (offset 0) opens a short-lived marker that
+ *    is bound to THIS search - the user, the endpoint and the normalized
+ *    criteria - and records the next offset the server expects. A later
+ *    request is a continuation only when a marker exists for the same search
+ *    and asks for exactly that offset; it then advances the marker. Anything
+ *    else with a nonzero offset - a different endpoint, different criteria,
+ *    an offset out of sequence, or no open search at all - is counted as a
+ *    new search and does not open a marker. So a client that only ever sends
+ *    continuation offsets, or that opens one real search and then hammers
+ *    another endpoint under it, is held to the search limit like anyone else,
+ *    while a real search's batches are never counted twice.
  *
- * @param int $batch_offset The offset this request asks for; 0 starts a search.
+ * @param int    $batch_offset The offset this request asks for; 0 starts a search.
+ * @param string $fingerprint  Endpoint plus normalized criteria, from the handler.
  * @return true|WP_Error
  */
-function fbps_check_rate_limit( $batch_offset = 0 ) {
+function fbps_check_rate_limit( $batch_offset = 0, $fingerprint = '' ) {
     $user_id = get_current_user_id();
     $client_ip = fbps_get_client_ip();
     $window = gmdate( 'YmdHi' );
@@ -383,10 +412,14 @@ function fbps_check_rate_limit( $batch_offset = 0 ) {
     $iph = md5( $client_ip );
     $batch_offset = absint( $batch_offset );
 
-    // Which requests count toward the search tier - see note 3 above.
-    $open_key = 'fbps_search_open_' . sanitize_key( $uid ? 'user_' . $uid : 'ip_' . $iph );
+    // Which requests count toward the search tier - see note 3 above. The
+    // marker key is the user (or IP when there is no user) plus a hash of the
+    // endpoint and criteria; its value is the next offset this search may ask
+    // for. Continuation requires both an exact key and an exact offset.
+    $open_key = 'fbps_search_open_' . md5( ( $uid ? 'user_' . $uid : 'ip_' . $iph ) . '|' . (string) $fingerprint );
     $is_first_batch = ( 0 === $batch_offset );
-    $is_continuation = ! $is_first_batch && (bool) get_transient( $open_key );
+    $expected_offset = $is_first_batch ? null : get_transient( $open_key );
+    $is_continuation = ! $is_first_batch && false !== $expected_offset && absint( $expected_offset ) === $batch_offset;
     $count_it = ! $is_continuation;
 
     // Two tiers. The search tier counts only a search's first batch, so the
@@ -438,13 +471,13 @@ function fbps_check_rate_limit( $batch_offset = 0 ) {
         }
     }
 
-    // A first batch opens the search; a genuine continuation keeps it open.
-    // A nonzero offset with no open search was counted above and must NOT
-    // open one, or the first uncounted request would unlock all the rest.
-    // Two minutes covers the longest gap between batches, which is bounded
-    // by the 25-second per-batch timeout.
+    // A first batch opens the search; a genuine continuation advances it. In
+    // both cases the marker now holds the ONLY offset the next request may
+    // use. A counted stray must NOT open a marker, or the first uncounted
+    // request would unlock all the rest. Two minutes covers the longest gap
+    // between batches, which is bounded by the 25-second per-batch timeout.
     if ( $is_first_batch || $is_continuation ) {
-        set_transient( $open_key, 1, 2 * MINUTE_IN_SECONDS );
+        set_transient( $open_key, $batch_offset + FBPS_BATCH_SIZE, 2 * MINUTE_IN_SECONDS );
     }
 
     return true;
@@ -1384,18 +1417,19 @@ function fbps_ajax_search_block() {
             throw new Exception( 'unauthorized' );
         }
 
-        // Rate limiting with IP tracking
-        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
-        $rate_check = fbps_check_rate_limit( $batch_offset );
-        if ( is_wp_error( $rate_check ) ) {
-            throw new Exception( 'rate_limit' );
-        }
-
         // Proper input handling with wp_unslash()
+        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
         $block = isset( $_POST['block_name'] ) ? sanitize_text_field( wp_unslash( $_POST['block_name'] ) ) : '';
         $class_name = isset( $_POST['class_name'] ) ? sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) : '';
         $anchor_name = isset( $_POST['anchor_name'] ) ? sanitize_text_field( wp_unslash( $_POST['anchor_name'] ) ) : '';
         $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
+
+        // Rate limiting with IP tracking. The fingerprint binds a continuation
+        // to this endpoint and these exact criteria (see fbps_check_rate_limit).
+        $rate_check = fbps_check_rate_limit( $batch_offset, fbps_search_fingerprint( 'block', [ $block, $class_name, $anchor_name, $post_types ] ) );
+        if ( is_wp_error( $rate_check ) ) {
+            throw new Exception( 'rate_limit' );
+        }
 
         $has_attribute_search = ! empty( $class_name ) || ! empty( $anchor_name );
 
@@ -1446,9 +1480,9 @@ function fbps_ajax_search_block() {
 
         // Use attribute search when class/anchor is provided, otherwise standard block search
         if ( $has_attribute_search ) {
-            $search_result = fbps_get_posts_with_attribute( $class_name, $anchor_name, $block, $post_types, $batch_offset, 100 );
+            $search_result = fbps_get_posts_with_attribute( $class_name, $anchor_name, $block, $post_types, $batch_offset, FBPS_BATCH_SIZE );
         } else {
-            $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, 100 );
+            $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, FBPS_BATCH_SIZE );
         }
         $results = [];
 
@@ -1524,16 +1558,16 @@ function fbps_ajax_search_pattern() {
             throw new Exception( 'unauthorized' );
         }
 
-        // Rate limiting with IP tracking
+        // Proper input handling with wp_unslash()
         $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
-        $rate_check = fbps_check_rate_limit( $batch_offset );
+        $pattern_id = isset( $_POST['pattern_id'] ) ? absint( $_POST['pattern_id'] ) : 0;
+        $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
+
+        // Rate limiting with IP tracking, bound to this endpoint and criteria.
+        $rate_check = fbps_check_rate_limit( $batch_offset, fbps_search_fingerprint( 'pattern', [ $pattern_id, $post_types ] ) );
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
-
-        // Proper input handling with wp_unslash()
-        $pattern_id = isset( $_POST['pattern_id'] ) ? absint( $_POST['pattern_id'] ) : 0;
-        $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
 
         if ( empty( $pattern_id ) ) {
             throw new Exception( 'empty_input' );
@@ -1552,7 +1586,7 @@ function fbps_ajax_search_pattern() {
             $total_posts = fbps_get_total_posts_count( $post_types );
         }
 
-        $search_result = fbps_get_posts_using_pattern( $pattern_id, $post_types, $batch_offset, 100 );
+        $search_result = fbps_get_posts_using_pattern( $pattern_id, $post_types, $batch_offset, FBPS_BATCH_SIZE );
         $results = [];
 
         foreach ( $search_result['posts'] as $post ) {
@@ -1620,16 +1654,16 @@ function fbps_ajax_search_shortcode() {
 			throw new Exception( 'unauthorized' );
 		}
 
-		// Rate limiting with IP tracking
+		// Proper input handling with wp_unslash()
 		$batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
-		$rate_check = fbps_check_rate_limit( $batch_offset );
+		$shortcode_name = isset( $_POST['shortcode_name'] ) ? sanitize_text_field( wp_unslash( $_POST['shortcode_name'] ) ) : '';
+		$post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
+
+		// Rate limiting with IP tracking, bound to this endpoint and criteria.
+		$rate_check = fbps_check_rate_limit( $batch_offset, fbps_search_fingerprint( 'shortcode', [ $shortcode_name, $post_types ] ) );
 		if ( is_wp_error( $rate_check ) ) {
 			throw new Exception( 'rate_limit' );
 		}
-
-		// Proper input handling with wp_unslash()
-		$shortcode_name = isset( $_POST['shortcode_name'] ) ? sanitize_text_field( wp_unslash( $_POST['shortcode_name'] ) ) : '';
-		$post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
 
 		if ( empty( $shortcode_name ) ) {
 			throw new Exception( 'empty_input' );
@@ -1658,7 +1692,7 @@ function fbps_ajax_search_shortcode() {
 			$total_posts = fbps_get_total_posts_count( $post_types );
 		}
 
-		$search_result = fbps_get_posts_using_shortcode( $shortcode_name, $post_types, $batch_offset, 100 );
+		$search_result = fbps_get_posts_using_shortcode( $shortcode_name, $post_types, $batch_offset, FBPS_BATCH_SIZE );
 
 		$results = [];
 
