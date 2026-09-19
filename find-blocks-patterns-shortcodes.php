@@ -353,26 +353,41 @@ function fbps_validate_block_namespace( $block_name ) {
  * 1. It counts SEARCHES in one tier and REQUESTS in another. A search of up
  *    to 1000 posts is up to ten AJAX requests, so counting every request
  *    meant "30 per minute" was really three to six searches. The search tier
- *    is incremented only by a search's first batch ($count_it = true,
- *    batch_offset 0). The request tier counts every batch at a ten-times
- *    higher ceiling (double what 30 full searches can cost), so a client that
- *    only ever sends continuation offsets is still bounded while a search the
- *    limiter admitted is never cut short.
+ *    is incremented by a search's first batch and by any request that is not
+ *    a recognized continuation (note 3). The request tier counts every batch
+ *    at a higher ceiling (double what 30 full searches can cost), so a search
+ *    the limiter admitted is never cut short.
  *
  * 2. The window is a fixed calendar minute, keyed on the current UTC minute.
  *    The previous sliding version called set_transient() on every request,
  *    which reset the expiry each time, so a user who kept retrying kept
  *    pushing their own unlock time back. A bucket key simply rolls over.
  *
- * @param bool $count_it Whether this request starts a new search.
+ * 3. The client-supplied batch_offset is not trusted to say which requests are
+ *    continuations. A first batch (offset 0) opens a short-lived "search
+ *    open" marker for the user; a later offset counts as a continuation only
+ *    while that marker exists, and refreshes it. A nonzero offset with no
+ *    open search is counted as a new search. So a client that only ever
+ *    sends continuation offsets is held to the search limit like anyone else,
+ *    while a real search's batches - which always follow its first batch
+ *    within the marker's lifetime - are never counted twice.
+ *
+ * @param int $batch_offset The offset this request asks for; 0 starts a search.
  * @return true|WP_Error
  */
-function fbps_check_rate_limit( $count_it = true ) {
+function fbps_check_rate_limit( $batch_offset = 0 ) {
     $user_id = get_current_user_id();
     $client_ip = fbps_get_client_ip();
     $window = gmdate( 'YmdHi' );
     $uid = absint( $user_id );
     $iph = md5( $client_ip );
+    $batch_offset = absint( $batch_offset );
+
+    // Which requests count toward the search tier - see note 3 above.
+    $open_key = 'fbps_search_open_' . sanitize_key( $uid ? 'user_' . $uid : 'ip_' . $iph );
+    $is_first_batch = ( 0 === $batch_offset );
+    $is_continuation = ! $is_first_batch && (bool) get_transient( $open_key );
+    $count_it = ! $is_continuation;
 
     // Two tiers. The search tier counts only a search's first batch, so the
     // numbers mean what a user would expect. The request tier counts every
@@ -421,6 +436,15 @@ function fbps_check_rate_limit( $count_it = true ) {
             // the key itself rotates.
             set_transient( $limit['full_key'], $limit['current'] + 1, 2 * MINUTE_IN_SECONDS );
         }
+    }
+
+    // A first batch opens the search; a genuine continuation keeps it open.
+    // A nonzero offset with no open search was counted above and must NOT
+    // open one, or the first uncounted request would unlock all the rest.
+    // Two minutes covers the longest gap between batches, which is bounded
+    // by the 25-second per-batch timeout.
+    if ( $is_first_batch || $is_continuation ) {
+        set_transient( $open_key, 1, 2 * MINUTE_IN_SECONDS );
     }
 
     return true;
@@ -1362,7 +1386,7 @@ function fbps_ajax_search_block() {
 
         // Rate limiting with IP tracking
         $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
-        $rate_check = fbps_check_rate_limit( 0 === $batch_offset );
+        $rate_check = fbps_check_rate_limit( $batch_offset );
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
@@ -1502,7 +1526,7 @@ function fbps_ajax_search_pattern() {
 
         // Rate limiting with IP tracking
         $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
-        $rate_check = fbps_check_rate_limit( 0 === $batch_offset );
+        $rate_check = fbps_check_rate_limit( $batch_offset );
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
@@ -1598,7 +1622,7 @@ function fbps_ajax_search_shortcode() {
 
 		// Rate limiting with IP tracking
 		$batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
-		$rate_check = fbps_check_rate_limit( 0 === $batch_offset );
+		$rate_check = fbps_check_rate_limit( $batch_offset );
 		if ( is_wp_error( $rate_check ) ) {
 			throw new Exception( 'rate_limit' );
 		}
