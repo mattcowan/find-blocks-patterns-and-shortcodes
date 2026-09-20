@@ -39,8 +39,11 @@ Things that follow from this model:
   `find-blocks-patterns-shortcodes.php`, `readme.txt`, `assets/`, `LICENSE`.
 - **No build step.** This is a single-file plugin — a plain checkout is
   already installable, so unlike a compiled plugin there is no `npm run
-  build` in the pipeline. The only tooling is the zero-dependency Node
-  version guard.
+  build` in the pipeline. The `package.json` at the root exists only for
+  the NVDA screen-reader test harness in `tests/e2e-sr/` (run on demand
+  with `npm run test:sr`, never in CI); it and `node_modules/` are excluded
+  from the shipped plugin by `.distignore`. The only tooling in the release
+  path is the zero-dependency Node version guard.
 
 ## 2. Why GitHub Releases, not GitHub Packages
 
@@ -90,10 +93,12 @@ permissions can stay **read-only** — `release-deploy.yml` requests
 
 ## 4. Standard release checklist (stable)
 
-1. **Bump the version in all three places** (check-versions.cjs enforces this):
+1. **Bump the version in all four places** (check-versions.cjs enforces this):
    - `find-blocks-patterns-shortcodes.php` — plugin header `Version:`
    - `find-blocks-patterns-shortcodes.php` — `define('FBPS_VERSION', ...)`
    - `readme.txt` — `Stable tag:`
+   - `package.json` — `version` (dev-only file, but the guard checks it so it
+     cannot drift from the other three)
 2. Add a changelog entry in `readme.txt` under `== Changelog ==` (the wp.org
    listing renders it via the assets sync).
 3. Push to `main`; wait for **CI** to go green (version consistency check +
@@ -126,7 +131,7 @@ workflow never touches SVN for a pre-release.
 
 If `main` has moved past the release you need to patch: branch from the
 release tag (`git switch -c hotfix/1.1.3 v1.1.2`), apply the fix, bump to
-`X.Y.Z+1` in all three places, merge back to `main`, and release as normal.
+`X.Y.Z+1` in all four places, merge back to `main`, and release as normal.
 If `main` hasn't diverged, a hotfix is just a small stable release.
 
 ## 7. Readme / assets updates without a release
