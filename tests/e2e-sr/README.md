@@ -1,0 +1,82 @@
+# Screen-reader journeys (NVDA + Guidepup)
+
+These tests drive a real, headed Firefox with a portable NVDA attached. They
+take the keyboard and the desktop while they run. Do not run them while you
+are using the machine, and do not put them in CI.
+
+The plugin itself has no build step. `package.json` and `node_modules` exist
+only for this harness, and `.distignore` keeps all of it out of the plugin that
+ships to WordPress.org.
+
+## Install (once per machine)
+
+```bash
+npm install
+npm run sr:setup
+```
+
+`sr:setup` installs the portable NVDA into `%LOCALAPPDATA%\guidepup\nvda\` and
+the Playwright Firefox build. Check that folder first; it survives across
+projects, so you can usually skip the NVDA step.
+
+## Credentials
+
+Create `.env` in the plugin root. It is gitignored.
+
+```
+# QA_BASE_URL wins if both are set; either one is enough.
+QA_BASE_URL=http://typography-stylist:8080
+WP_BASE_URL=http://typography-stylist:8080
+WP_USERNAME=matt
+WP_PASSWORD=pass
+```
+
+The login and the journeys resolve the site the same way (`QA_BASE_URL`, then `WP_BASE_URL`, then the built-in default), so `auth.json` is always written for the origin the journeys visit.
+
+`global-setup.js` logs in with headless Chromium and saves the cookies to
+`auth.json`. It refuses to post the password over plain HTTP unless the host
+resolves to loopback, and pins the resolved address so a later DNS answer
+cannot redirect the login. Set `WP_ALLOW_HTTP=1` to override for a trusted
+intranet host.
+
+## Run
+
+```bash
+npm run test:sr                 # all journeys
+npm run test:sr -- -g "sort"    # one of them
+npm run test:sr:report          # open the HTML report
+```
+
+Each journey takes one to two minutes. Spoken-phrase logs are written to
+`tests/e2e-sr/logs/` as JSON; the QA report quotes them verbatim.
+
+## The journeys
+
+| File | What it settles |
+|---|---|
+| `block-search.sr.spec.js` | The primary flow. Every form control announces a name; the two hints on this form (HTML Anchor and Post Types) are announced with their control (F8); the completion phrase is short and says how many results were found (F7). |
+| `results-table.sr.spec.js` | Column toggles keep focus on the checkbox (F5); sortable headers are buttons in `th[scope][aria-sort]` and announce their direction (F6). |
+| `landmarks-and-empty-state.sr.spec.js` | Empty results containers are not landmarks, and role and `aria-label` are applied together only when a container fills (F15). |
+
+The screen-reader assertions are deliberately strict. A failure is a finding,
+not a broken test — read the saved phrase log before changing an expectation.
+
+## Traps worth knowing
+
+- **An aborted run leaves NVDA running.** Quit it with
+  `%LOCALAPPDATA%\guidepup\nvda\all\<version>\extracted\nvda.exe -q` before the
+  next run.
+- **Speech is captured only around a Guidepup command** (`nvda.press`,
+  `nvda.perform`). Anything driven with `page.click` or `page.keyboard` is
+  silent in the log. Build state with Playwright; listen through NVDA.
+- **The window-title regex must not match your editor.** `helpers.TITLE` is
+  scoped to the WordPress admin title for this screen for that reason.
+- **An empty phrase is usually a capture miss**, not a finding. Re-run before
+  reporting one.
+- **Never `taskkill /F` NVDA between runs.** A forced kill left the next
+  Guidepup start timing out with "NVDA cannot be started" (2026-09-18). Use
+  the `-q` quit above. And check CPU load first — a VS Code update installing
+  in the background was enough to starve NVDA and Firefox of the desktop.
+
+How speech capture works, the project-file layout, and the full trap list are in
+[NVDA-GUIDEPUP.md](NVDA-GUIDEPUP.md) in this folder.

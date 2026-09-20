@@ -1,21 +1,26 @@
 /**
  * Version-consistency guard. Zero dependencies.
  *
- * The plugin's version lives in THREE places that must always agree:
- *   1. find-blocks-patterns-shortcodes.php — plugin header `Version:`
- *   2. find-blocks-patterns-shortcodes.php — `define('FBPS_VERSION', '...')`
- *   3. readme.txt                          — `Stable tag:`
+ * The plugin's version lives in FOUR places that must always agree:
+ *   1. find-blocks-patterns-shortcodes.php - plugin header `Version:`
+ *   2. find-blocks-patterns-shortcodes.php - `define('FBPS_VERSION', '...')`
+ *   3. readme.txt                          - `Stable tag:`
+ *   4. package.json                        - `version`
  *
- * (This is a single-file plugin with no build step, so there is no
- * package.json to keep in sync — three sources, not four.)
+ * The plugin still has no build step; package.json exists only for the NVDA
+ * screen-reader harness in tests/e2e-sr and never ships (see .distignore).
+ * It is checked anyway, because a version that drifts from the PHP/readme sources is
+ * a bug whether or not the file is distributed. It is treated as optional: if
+ * package.json is ever removed, the guard falls back to the PHP/readme sources rather
+ * than failing.
  *
  * Modes:
  *   node scripts/check-versions.cjs
- *     Consistency mode (runs in CI on every push): all three must match
+ *     Consistency mode (runs in CI on every push): every source must match
  *     each other. Exits 1 with a table of mismatches.
  *
  *   node scripts/check-versions.cjs v1.1.3
- *     Tag mode (runs before a wp.org deploy): all three must equal the tag
+ *     Tag mode (runs before a wp.org deploy): every source must equal the tag
  *     (leading "v" stripped). This is what stops a GitHub Release tagged
  *     v1.1.3 from deploying files that still say 1.1.2 — the #1 wp.org
  *     release mistake, because `Stable tag` decides what wp.org serves.
@@ -57,6 +62,24 @@ const versions = {
   'Stable tag (readme.txt)': extract(/^Stable tag:\s*(.+)$/m, readmeTxt, 'Stable tag', 'readme.txt')
 };
 
+// package.json is dev-only tooling and may legitimately not exist; when it
+// does, its version is held to the same standard as the PHP/readme sources.
+const pkgPath = path.join(rootDir, 'package.json');
+if (fs.existsSync(pkgPath)) {
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  } catch (e) {
+    console.error(`\u2717 package.json exists but is not valid JSON: ${e.message}`);
+    process.exit(1);
+  }
+  if (typeof pkg.version !== 'string' || !pkg.version.trim()) {
+    console.error('\u2717 package.json exists but has no "version" field.');
+    process.exit(1);
+  }
+  versions['version (package.json)'] = pkg.version.trim();
+}
+
 function table(expectedByKey) {
   const width = Math.max(...Object.keys(versions).map(k => k.length));
   for (const [key, value] of Object.entries(versions)) {
@@ -79,7 +102,7 @@ if (!tagArg) {
   console.log('Version consistency check:');
   table(null);
   if (!allMatch) {
-    console.error('\n✗ Version mismatch — the three version sources must agree.');
+    console.error(`\n✗ Version mismatch — all ${Object.keys(versions).length} version sources must agree.`);
     failed = true;
   } else {
     console.log(`\n✓ All version sources agree: ${values[0]}`);

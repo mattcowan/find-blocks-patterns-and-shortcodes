@@ -85,15 +85,21 @@
 #fbps-export-button:focus,
 #fbps-pattern-search-button:focus,
 #fbps-pattern-cancel-button:focus,
-#fbps-pattern-export-button:focus,
 #fbps-shortcode-search-button:focus,
-#fbps-shortcode-cancel-button:focus,
-#fbps-shortcode-export-button:focus {
+#fbps-shortcode-cancel-button:focus {
     outline: 2px solid #0073aa;
     outline-offset: 2px;
 }
 
-#fbps-search-results a:focus {
+/*
+ * All three results tables, not just the block one (the other two used to
+ * fall back to core's ring only). Listed by id on purpose: core's
+ * .wp-core-ui .button:focus sets a transparent outline at (0,3,0), which
+ * beats a class-based selector here, so this rule needs the id's specificity.
+ */
+#fbps-search-results a:focus,
+#fbps-pattern-search-results a:focus,
+#fbps-shortcode-search-results a:focus {
     outline: 2px solid #0073aa;
     outline-offset: 1px;
 }
@@ -199,4 +205,47 @@
     content: "\25BC";
     color: #2c3338;
     letter-spacing: normal;
+}
+
+/*
+ * Sort controls are buttons, not links: they reorder the table in place and
+ * navigate nowhere. These rules strip the native button chrome so they keep
+ * the appearance WordPress core gives `th.sortable a`.
+ */
+.fbps-results-table th.sortable .fbps-sort-button {
+    display: block;
+    width: 100%;
+    padding: 8px;
+    margin: -8px;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.fbps-results-table th.sortable .fbps-sort-button:focus {
+    outline: 2px solid #0073aa;
+    outline-offset: -2px;
+    box-shadow: none;
+}
+
+.fbps-partial-notice {
+    font-weight: 600;
+    margin: 0.5em 0;
+}
+
+/*
+ * After a search finishes the progress region holds only screen-reader text,
+ * so it must not leave a gap above the results.
+ */
+.fbps-progress-container.fbps-progress-done {
+    margin-top: 0;
+}
+
+.fbps-results-container .fbps-truncated {
+    margin: 0 0 1em;
 }

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.1.2
+ * Version:     1.1.3
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.1.2' );
+define( 'FBPS_VERSION', '1.1.3' );
+define( 'FBPS_BATCH_SIZE', 100 ); // posts scanned per AJAX batch
 
 /**
  * Plugin activation - register custom capability.
@@ -147,8 +148,10 @@ function fbps_enqueue_admin_assets( $hook ) {
 				'foundSoFar'            => __( 'found so far...', 'find-blocks-patterns-shortcodes' ),
 				'found'                 => __( 'found', 'find-blocks-patterns-shortcodes' ),
 				'title'                 => __( 'Title', 'find-blocks-patterns-shortcodes' ),
+				'noTitle'               => __( '(no title)', 'find-blocks-patterns-shortcodes' ),
+				'viewLink'              => __( 'View Link', 'find-blocks-patterns-shortcodes' ),
 				'type'                  => __( 'Type', 'find-blocks-patterns-shortcodes' ),
-				'date'                  => __( 'Date', 'find-blocks-patterns-shortcodes' ),
+				'date'                  => __( 'Modified', 'find-blocks-patterns-shortcodes' ),
 				'actions'               => __( 'Actions', 'find-blocks-patterns-shortcodes' ),
 				'view'                  => __( 'View', 'find-blocks-patterns-shortcodes' ),
 				'edit'                  => __( 'Edit', 'find-blocks-patterns-shortcodes' ),
@@ -157,6 +160,9 @@ function fbps_enqueue_admin_assets( $hook ) {
 				'unknownError'          => __( 'Unknown error', 'find-blocks-patterns-shortcodes' ),
 				'networkError'          => __( 'Network error. Please try again.', 'find-blocks-patterns-shortcodes' ),
 				'searchCancelled'       => __( 'Search cancelled.', 'find-blocks-patterns-shortcodes' ),
+				'partialResults'        => __( 'The search stopped early. These are the results found before it stopped.', 'find-blocks-patterns-shortcodes' ),
+				/* translators: 1: number of posts scanned, 2: total number of posts */
+				'truncatedNotice'       => __( 'Searched the first %1$s of %2$s posts. To search more, raise the fbps_query_limit filter (up to 1000).', 'find-blocks-patterns-shortcodes' ),
 				'noBlockResults'        => __( 'No content found using that block.', 'find-blocks-patterns-shortcodes' ),
 				'noPatternResults'      => __( 'No content found using that synced pattern.', 'find-blocks-patterns-shortcodes' ),
 				'noShortcodeResults'    => __( 'No content found using that shortcode.', 'find-blocks-patterns-shortcodes' ),
@@ -342,36 +348,89 @@ function fbps_validate_block_namespace( $block_name ) {
 /**
  * Check rate limiting for user and IP.
  */
+/**
+ * Rate limit search requests per user and per IP.
+ *
+ * One counter per identity, incremented by every request, in a fixed
+ * calendar-minute bucket. That is all. A search of up to 1000 posts is up to
+ * ten requests, so the ceilings are set so that a user re-running full
+ * searches back to back cannot reach them (about 30 requests a minute is the
+ * realistic maximum), while a client hammering the endpoint is cut off well
+ * before it can cost the server much: each request is bounded to one batch
+ * of at most FBPS_BATCH_SIZE posts by the query limit in the search helpers.
+ *
+ * Trade-off, accepted on purpose: because every batch counts, a very heavy
+ * legitimate burst could hit the ceiling part-way through a search. The UI
+ * keeps the results already found on screen and exportable, and says the
+ * search stopped early; the client can retry a minute later.
+ *
+ * Deliberately no "searches versus batches" distinction and no continuation
+ * state. An earlier version tried to count searches by trusting or validating
+ * the client's batch_offset, and every refinement of that opened another way
+ * to be classified as a continuation. Counting every request leaves nothing
+ * to classify.
+ *
+ * The bucket key includes the current UTC minute, so the window rolls over
+ * on its own and a refused retry does not push the unlock time back. Both
+ * counters are checked before either is incremented, so a request refused by
+ * one is not charged to the other.
+ *
+ * @return true|WP_Error
+ */
 function fbps_check_rate_limit() {
-    $user_id = get_current_user_id();
-    $client_ip = fbps_get_client_ip();
+    $uid = absint( get_current_user_id() );
+    $iph = md5( fbps_get_client_ip() );
+    $window = gmdate( 'YmdHi' );
 
-    // Track by both user ID and IP
-    $rate_limit_keys = [
-        'user_' . absint( $user_id ) => 30,  // 30 requests per minute per user
-        'ip_' . md5( $client_ip ) => 50,     // 50 requests per minute per IP
+    $limits = [
+        [ 'key' => 'user_' . $uid, 'max' => 120 ], // requests / min / user (12 full ten-batch searches)
+        [ 'key' => 'ip_' . $iph,   'max' => 300 ], // requests / min / IP (a shared address with several editors)
     ];
 
-    foreach ( $rate_limit_keys as $key => $max_requests ) {
-        $full_key = 'fbps_rate_limit_' . sanitize_key( $key );
-        $requests = get_transient( $full_key );
-
+    foreach ( $limits as &$limit ) {
+        $limit['full_key'] = 'fbps_rate_limit_' . sanitize_key( $limit['key'] . '_' . $window );
         // Ensure we're working with integers only (object injection prevention)
-        $requests = absint( $requests );
+        $limit['current'] = absint( get_transient( $limit['full_key'] ) );
 
-        if ( $requests > $max_requests ) {
+        if ( $limit['current'] >= $limit['max'] ) {
             fbps_log_security_event( 'rate_limit_exceeded', [
-                'key' => $key,
-                'requests' => $requests,
-                'limit' => $max_requests
+                'key' => $limit['key'],
+                'requests' => $limit['current'],
+                'limit' => $limit['max']
             ] );
             return new WP_Error( 'rate_limit', __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ) );
         }
+    }
+    unset( $limit );
 
-        set_transient( $full_key, $requests + 1, MINUTE_IN_SECONDS );
+    foreach ( $limits as $limit ) {
+        // Two minutes, not one: a bucket opened at :59 must outlive the minute
+        // it belongs to, and expiry resets are harmless because the key rotates.
+        set_transient( $limit['full_key'], $limit['current'] + 1, 2 * MINUTE_IN_SECONDS );
     }
 
     return true;
+}
+
+/**
+ * The most posts one search may scan.
+ *
+ * Read from the fbps_query_limit filter (default 500, hard cap 1000). A
+ * filter that returns 0, '', or something non-numeric must not switch every
+ * search off: absint() turns all of those into 0, and a limit of 0 makes the
+ * very first batch a terminal empty one - reported to the user as "no
+ * results". Anything below 1 falls back to the default.
+ *
+ * @return int
+ */
+function fbps_get_query_limit() {
+    // (int), not absint(): a negative value is a mistake and must fall back to
+    // the default, not become its absolute value.
+    $limit = (int) apply_filters( 'fbps_query_limit', 500 );
+    if ( $limit < 1 ) {
+        $limit = 500;
+    }
+    return min( $limit, 1000 );
 }
 
 /**
@@ -405,11 +464,128 @@ function fbps_get_synced_patterns() {
 }
 
 /**
+ * Walk parsed blocks (and their inner blocks) looking for a core/block
+ * reference to $pattern_id.
+ *
+ * @param array $blocks     Output of parse_blocks().
+ * @param int   $pattern_id The wp_block post ID to look for.
+ * @return bool
+ */
+function fbps_blocks_reference_pattern( $blocks, $pattern_id ) {
+    foreach ( $blocks as $block ) {
+        // Match exactly what WordPress renders. Core hands attrs.ref to
+        // get_post(), which accepts an int, a numeric string ("12") and a
+        // float (12.7), and renders pattern 12 for all three - so all three
+        // must match here. A non-numeric string ("12abc") is not rendered,
+        // and a bare (int) cast would wrongly turn it into 12.
+        if ( isset( $block['blockName'] ) && 'core/block' === $block['blockName']
+            && isset( $block['attrs']['ref'] )
+            && is_numeric( $block['attrs']['ref'] )
+            && (int) $block['attrs']['ref'] === $pattern_id ) {
+            return true;
+        }
+
+        if ( ! empty( $block['innerBlocks'] ) && fbps_blocks_reference_pattern( $block['innerBlocks'], $pattern_id ) ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Does this post content use the given synced pattern?
+ *
+ * Uses WordPress's own block parser rather than a regex over the serialized
+ * markup. A regex has to model the attribute JSON, and every time the block
+ * format grows the regex silently starts returning false negatives:
+ *
+ *   - core/block is a void block, so the delimiter ends "} /-->", not "} -->".
+ *   - Pattern overrides (WP 6.6+) and renamed instances nest objects inside
+ *     attrs, so any [^}]* style scan stops at the first inner closing brace.
+ *   - "ref":12 must not match a reference to pattern 120.
+ *
+ * parse_blocks() is core's serializer in reverse, so it cannot drift from it.
+ * The strpos() pre-check keeps the common case (a post that references no
+ * pattern at all) as cheap as the old regex, because parse_blocks() only runs
+ * on content that contains a wp:block delimiter.
+ *
+ * @param string $content    Raw post_content.
+ * @param int    $pattern_id The wp_block post ID to look for.
+ * @return bool
+ */
+function fbps_content_uses_pattern( $content, $pattern_id ) {
+    if ( ! is_string( $content ) || '' === $content ) {
+        return false;
+    }
+
+    $pattern_id = absint( $pattern_id );
+    if ( ! $pattern_id ) {
+        return false;
+    }
+
+    // Cheap reject: no synced pattern reference can exist without this substring.
+    if ( false === strpos( $content, 'wp:block' ) ) {
+        return false;
+    }
+
+    return fbps_blocks_reference_pattern( parse_blocks( $content ), $pattern_id );
+}
+
+/**
+ * Drop the cached shortcode list when the set of registered shortcodes can
+ * change: a plugin activating or deactivating, or a theme switch. Same gap
+ * as the pattern cache below - without this a shortcode from a newly
+ * activated plugin took up to five minutes to appear in the dropdown.
+ */
+add_action( 'activated_plugin', 'fbps_flush_shortcode_cache' );
+add_action( 'deactivated_plugin', 'fbps_flush_shortcode_cache' );
+add_action( 'switch_theme', 'fbps_flush_shortcode_cache' );
+function fbps_flush_shortcode_cache() {
+    delete_transient( 'fbps_all_shortcodes' );
+}
+
+/**
+ * Drop the cached synced-pattern list whenever a wp_block post changes.
+ *
+ * fbps_get_synced_patterns() caches the dropdown for five minutes. Without
+ * this, a pattern created just before opening the tool does not appear until
+ * the transient expires, and the only remedy is the CLI clear-cache command.
+ *
+ * save_post_{post_type} covers create, update, publish and trash (trashing is
+ * a status change through wp_update_post). before_delete_post covers
+ * permanent deletion. It is used rather than deleted_post because the post
+ * still exists when it fires, so get_post() can read the type on every
+ * WordPress version this plugin supports; deleted_post only passes the post
+ * object from 5.5, and on 5.0-5.4 the row is already gone by then.
+ */
+add_action( 'save_post_wp_block', 'fbps_flush_pattern_cache' );
+add_action( 'before_delete_post', 'fbps_flush_pattern_cache_on_delete' );
+function fbps_flush_pattern_cache() {
+    delete_transient( 'fbps_synced_patterns' );
+}
+function fbps_flush_pattern_cache_on_delete( $post_id ) {
+    $post = get_post( $post_id );
+    if ( $post && 'wp_block' === $post->post_type ) {
+        fbps_flush_pattern_cache();
+    }
+}
+
+/**
  * Returns an array of WP_Post objects that contain the specified synced pattern.
  */
 function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-    $limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-    $limit = min( $limit, 1000 ); // Hard cap at 1000
+    $limit = fbps_get_query_limit();
+
+    // The limit is the most posts one search may scan. An offset at or past
+    // it is a terminal batch; the last batch before it is clamped so the scan
+    // never runs past the limit. Callers read 'scanned' to tell a capped
+    // scan from a genuine end of content.
+    $batch_offset = absint( $batch_offset );
+    if ( $batch_offset >= $limit ) {
+        return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+    }
+    $batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
     // Default to all public post types if none specified
     if ( empty( $post_types ) ) {
@@ -437,9 +613,8 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
 
     $matches = [];
     $start_time = microtime( true );
+    $processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
-    // Build regex pattern to find wp:block with ref attribute
-    $ref_pattern = '/<!--\s+wp:block\s+\{[^}]*"ref"\s*:\s*' . $pattern_id . '[^}]*\}\s+-->/';
 
     foreach ( $ids as $post_id ) {
         // Timeout protection
@@ -447,6 +622,8 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
             fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
             break;
         }
+
+        $processed++;
 
         $post_id = absint( $post_id ); // Extra validation
 
@@ -456,8 +633,7 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
 
         if ( false === $has_pattern_cached ) {
             $post = get_post( $post_id );
-            // Check if post content contains the pattern reference
-            $has_pattern_cached = preg_match( $ref_pattern, $post->post_content ) ? 'yes' : 'no';
+            $has_pattern_cached = fbps_content_uses_pattern( $post->post_content, $pattern_id ) ? 'yes' : 'no';
             wp_cache_set( $cache_key, $has_pattern_cached, 'find-blocks-patterns-shortcodes', 300 ); // 5-minute cache
         }
 
@@ -466,10 +642,21 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
         }
     }
 
+    // If the 25-second guard stopped the loop, only $processed of the fetched
+    // IDs were examined. scanned and next_offset are derived from that count so
+    // the caller resumes at the first unexamined post instead of skipping the
+    // rest of the batch - and a timeout on the last batch is not reported as a
+    // complete scan. has_more is true after a timeout because this batch itself
+    // still has posts to examine.
+    $timed_out = $processed < count( $ids );
+
     return [
         'posts' => $matches,
-        'has_more' => count( $ids ) === $batch_size,
-        'next_offset' => $batch_offset + $batch_size,
+        'has_more' => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+        'next_offset' => $batch_offset + $processed,
+        'scanned' => $processed,
+        'timed_out' => $timed_out,
+        'limit' => $limit,
     ];
 }
 
@@ -536,8 +723,17 @@ function fbps_validate_shortcode_name( $shortcode_name ) {
  * Returns an array of WP_Post objects that contain the specified shortcode.
  */
 function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-	$limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-	$limit = min( $limit, 1000 ); // Hard cap at 1000
+	$limit = fbps_get_query_limit();
+
+	// The limit is the most posts one search may scan. An offset at or past
+	// it is a terminal batch; the last batch before it is clamped so the scan
+	// never runs past the limit. Callers read 'scanned' to tell a capped
+	// scan from a genuine end of content.
+	$batch_offset = absint( $batch_offset );
+	if ( $batch_offset >= $limit ) {
+		return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+	}
+	$batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
 	// Default to all public post types if none specified
 	if ( empty( $post_types ) ) {
@@ -563,6 +759,7 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 
 	$matches = [];
 	$start_time = microtime( true );
+	$processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
 	foreach ( $ids as $post_id ) {
 		// Timeout protection
@@ -570,6 +767,8 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 			fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
 			break;
 		}
+
+		$processed++;
 
 		$post_id = absint( $post_id ); // Extra validation
 
@@ -589,10 +788,21 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 		}
 	}
 
+	// If the 25-second guard stopped the loop, only $processed of the fetched
+	// IDs were examined. scanned and next_offset are derived from that count so
+	// the caller resumes at the first unexamined post instead of skipping the
+	// rest of the batch - and a timeout on the last batch is not reported as a
+	// complete scan. has_more is true after a timeout because this batch itself
+	// still has posts to examine.
+	$timed_out = $processed < count( $ids );
+
 	return [
 		'posts' => $matches,
-		'has_more' => count( $ids ) === $batch_size,
-		'next_offset' => $batch_offset + $batch_size,
+		'has_more' => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+		'next_offset' => $batch_offset + $processed,
+		'scanned' => $processed,
+		'timed_out' => $timed_out,
+		'limit' => $limit,
 	];
 }
 
@@ -608,15 +818,21 @@ function fbps_get_total_posts_count( $post_types = [] ) {
         $post_types = array_map( 'sanitize_key', (array) $post_types );
     }
 
-    $count = wp_count_posts();
+    // Count only the statuses the searches actually scan. The search helpers
+    // query with post_status => 'any', which excludes statuses flagged
+    // exclude_from_search (auto-draft, trash). Summing every status would
+    // overstate the total and could report a scan as truncated when it had
+    // in fact reached the end.
+    $scannable = get_post_stati( [ 'exclude_from_search' => false ] );
     $total = 0;
 
     foreach ( $post_types as $post_type ) {
         $count_obj = wp_count_posts( $post_type );
         if ( $count_obj ) {
-            // Sum all statuses
             foreach ( get_object_vars( $count_obj ) as $status => $count_value ) {
-                $total += (int) $count_value;
+                if ( isset( $scannable[ $status ] ) ) {
+                    $total += (int) $count_value;
+                }
             }
         }
     }
@@ -628,8 +844,17 @@ function fbps_get_total_posts_count( $post_types = [] ) {
  * Returns an array of WP_Post objects that contain the specified block.
  */
 function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-    $limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-    $limit = min( $limit, 1000 ); // Hard cap at 1000
+    $limit = fbps_get_query_limit();
+
+    // The limit is the most posts one search may scan. An offset at or past
+    // it is a terminal batch; the last batch before it is clamped so the scan
+    // never runs past the limit. Callers read 'scanned' to tell a capped
+    // scan from a genuine end of content.
+    $batch_offset = absint( $batch_offset );
+    if ( $batch_offset >= $limit ) {
+        return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+    }
+    $batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
     // Default to all public post types if none specified
     if ( empty( $post_types ) ) {
@@ -655,6 +880,7 @@ function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offse
 
     $matches = [];
     $start_time = microtime( true );
+    $processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
     foreach ( $ids as $post_id ) {
         // Timeout protection
@@ -662,6 +888,8 @@ function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offse
             fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
             break;
         }
+
+        $processed++;
 
         $post_id = absint( $post_id ); // Extra validation
 
@@ -681,10 +909,21 @@ function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offse
         }
     }
 
+    // If the 25-second guard stopped the loop, only $processed of the fetched
+    // IDs were examined. scanned and next_offset are derived from that count so
+    // the caller resumes at the first unexamined post instead of skipping the
+    // rest of the batch - and a timeout on the last batch is not reported as a
+    // complete scan. has_more is true after a timeout because this batch itself
+    // still has posts to examine.
+    $timed_out = $processed < count( $ids );
+
     return [
         'posts' => $matches,
-        'has_more' => count( $ids ) === $batch_size,
-        'next_offset' => $batch_offset + $batch_size,
+        'has_more' => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+        'next_offset' => $batch_offset + $processed,
+        'scanned' => $processed,
+        'timed_out' => $timed_out,
+        'limit' => $limit,
     ];
 }
 
@@ -704,19 +943,26 @@ function fbps_add_menu() {
 }
 
 /**
- * Add security headers to admin page.
+ * Add security headers to the plugin's admin page.
+ *
+ * Hooked to load-{$page_hook}, which WordPress fires only when this screen is
+ * about to render and before any output. This used to sit on admin_init and
+ * compare get_current_screen()->id, which never worked for two reasons:
+ * admin_init fires before set_current_screen(), so the screen was always null,
+ * and the id it compared against was toplevel_page_* when a Tools submenu is
+ * tools_page_* (the same string the asset enqueue already uses correctly).
  */
-add_action( 'admin_init', 'fbps_set_security_headers' );
+add_action( 'load-tools_page_find-blocks-patterns-shortcodes', 'fbps_set_security_headers' );
 function fbps_set_security_headers() {
-    $screen = get_current_screen();
-    if ( ! $screen || $screen->id !== 'toplevel_page_find-blocks-patterns-shortcodes' ) {
+    if ( headers_sent() ) {
         return;
     }
 
     // Security headers
+    // X-XSS-Protection is deliberately not sent: the legacy auditor it
+    // enabled was removed from Chromium, and OWASP/MDN now advise against it.
     header( 'X-Content-Type-Options: nosniff' );
     header( 'X-Frame-Options: SAMEORIGIN' );
-    header( 'X-XSS-Protection: 1; mode=block' );
     header( 'Referrer-Policy: strict-origin-when-cross-origin' );
     header( 'Permissions-Policy: geolocation=(), microphone=(), camera=()' );
 }
@@ -776,21 +1022,21 @@ function fbps_render_admin_page() {
             <div class="fbps-search-field">
                 <label for="fbps-anchor-name"><?php esc_html_e( 'HTML Anchor:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <input type="text" id="fbps-anchor-name" class="fbps-search-input" placeholder="<?php esc_attr_e( 'e.g. my-section', 'find-blocks-patterns-shortcodes' ); ?>">
-                    <small class="description"><?php esc_html_e( 'Optional — search by class or anchor alone, or combine with a block name.', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <input type="text" id="fbps-anchor-name" class="fbps-search-input" aria-describedby="fbps-anchor-name-desc" placeholder="<?php esc_attr_e( 'e.g. my-section', 'find-blocks-patterns-shortcodes' ); ?>">
+                    <small class="description" id="fbps-anchor-name-desc"><?php esc_html_e( 'Optional — search by class or anchor alone, or combine with a block name.', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-field">
                 <label for="fbps-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <select id="fbps-post-types" class="fbps-post-types-select" multiple size="4">
+                    <select id="fbps-post-types" class="fbps-post-types-select" aria-describedby="fbps-post-types-desc" multiple size="4">
                         <?php foreach ( $post_types as $post_type ) : ?>
                             <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
                                 <?php echo esc_html( $post_type->label ); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <small class="description" id="fbps-post-types-desc"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-actions">
@@ -821,14 +1067,14 @@ function fbps_render_admin_page() {
             <div class="fbps-search-field">
                 <label for="fbps-pattern-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <select id="fbps-pattern-post-types" class="fbps-post-types-select" multiple size="4">
+                    <select id="fbps-pattern-post-types" class="fbps-post-types-select" aria-describedby="fbps-pattern-post-types-desc" multiple size="4">
                         <?php foreach ( $post_types as $post_type ) : ?>
                             <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
                                 <?php echo esc_html( $post_type->label ); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <small class="description" id="fbps-pattern-post-types-desc"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-actions">
@@ -859,14 +1105,14 @@ function fbps_render_admin_page() {
             <div class="fbps-search-field">
                 <label for="fbps-shortcode-post-types"><?php esc_html_e( 'Post Types:', 'find-blocks-patterns-shortcodes' ); ?></label>
                 <div class="fbps-field-content">
-                    <select id="fbps-shortcode-post-types" class="fbps-post-types-select" multiple size="4">
+                    <select id="fbps-shortcode-post-types" class="fbps-post-types-select" aria-describedby="fbps-shortcode-post-types-desc" multiple size="4">
                         <?php foreach ( $post_types as $post_type ) : ?>
                             <option value="<?php echo esc_attr( $post_type->name ); ?>" <?php selected( in_array( $post_type->name, [ 'post', 'page' ], true ) ); ?>>
                                 <?php echo esc_html( $post_type->label ); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <small class="description"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
+                    <small class="description" id="fbps-shortcode-post-types-desc"><?php esc_html_e( 'Hold Ctrl/Cmd to select multiple', 'find-blocks-patterns-shortcodes' ); ?></small>
                 </div>
             </div>
             <div class="fbps-search-actions">
@@ -884,30 +1130,33 @@ function fbps_render_admin_page() {
             <legend><?php esc_html_e( 'Show columns:', 'find-blocks-patterns-shortcodes' ); ?></legend>
             <label><input type="checkbox" class="fbps-col-toggle" value="title" checked> <?php esc_html_e( 'Title', 'find-blocks-patterns-shortcodes' ); ?></label>
             <label><input type="checkbox" class="fbps-col-toggle" value="type" checked> <?php esc_html_e( 'Type', 'find-blocks-patterns-shortcodes' ); ?></label>
-            <label><input type="checkbox" class="fbps-col-toggle" value="date" checked> <?php esc_html_e( 'Date', 'find-blocks-patterns-shortcodes' ); ?></label>
+            <label><input type="checkbox" class="fbps-col-toggle" value="date" checked> <?php esc_html_e( 'Modified', 'find-blocks-patterns-shortcodes' ); ?></label>
             <label><input type="checkbox" class="fbps-col-toggle" value="className"> <?php esc_html_e( 'CSS Class', 'find-blocks-patterns-shortcodes' ); ?></label>
             <label><input type="checkbox" class="fbps-col-toggle" value="anchor"> <?php esc_html_e( 'HTML Anchor', 'find-blocks-patterns-shortcodes' ); ?></label>
         </fieldset>
+        <?php // These containers are NOT live regions. NVDA read the entire
+              // results table aloud on every change when they were, because
+              // aria-atomic re-announces the whole region and the table lives
+              // inside it - 1778 characters for a nine-row table, five times
+              // over on a 500-post search. Completion is announced instead by
+              // the small role="status" progress region above, which exists
+              // from page load and so announces reliably.
+              //
+              // role="region" and aria-label are added by admin.js only while a
+              // container holds results, so empty containers stay out of the
+              // landmark list. aria-label is prohibited on a div with no role,
+              // so the label waits in data-region-label until it applies. ?>
         <div id="fbps-shortcode-search-results"
              class="fbps-results-container"
-             role="region"
-             aria-live="polite"
-             aria-atomic="true"
-             aria-label="<?php esc_attr_e( 'Shortcode Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
+             data-region-label="<?php esc_attr_e( 'Shortcode Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
         <div id="fbps-pattern-search-results"
              class="fbps-results-container"
-             role="region"
-             aria-live="polite"
-             aria-atomic="true"
-             aria-label="<?php esc_attr_e( 'Pattern Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
+             data-region-label="<?php esc_attr_e( 'Pattern Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
         <div id="fbps-search-results"
              class="fbps-results-container"
-             role="region"
-             aria-live="polite"
-             aria-atomic="true"
-             aria-label="<?php esc_attr_e( 'Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
+             data-region-label="<?php esc_attr_e( 'Search Results', 'find-blocks-patterns-shortcodes' ); ?>">
         </div>
     </div>
     <?php
@@ -1126,8 +1375,17 @@ function fbps_extract_block_attributes( $post, $class_name = '', $anchor_name = 
  * @return array { posts: WP_Post[], has_more: bool, next_offset: int }
  */
 function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $block_name = '', $post_types = [], $batch_offset = 0, $batch_size = 100 ) {
-    $limit = absint( apply_filters( 'fbps_query_limit', 500 ) );
-    $limit = min( $limit, 1000 );
+    $limit = fbps_get_query_limit();
+
+    // The limit is the most posts one search may scan. An offset at or past
+    // it is a terminal batch; the last batch before it is clamped so the scan
+    // never runs past the limit. Callers read 'scanned' to tell a capped
+    // scan from a genuine end of content.
+    $batch_offset = absint( $batch_offset );
+    if ( $batch_offset >= $limit ) {
+        return [ 'posts' => [], 'has_more' => false, 'next_offset' => $batch_offset, 'scanned' => 0, 'limit' => $limit ];
+    }
+    $batch_size = min( absint( $batch_size ), $limit - $batch_offset );
 
     if ( empty( $post_types ) ) {
         $post_types = [ 'post', 'page' ];
@@ -1150,12 +1408,15 @@ function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $bl
 
     $matches    = [];
     $start_time = microtime( true );
+    $processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
     foreach ( $ids as $post_id ) {
         if ( microtime( true ) - $start_time > 25 ) {
             fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
             break;
         }
+
+        $processed++;
 
         $post_id = absint( $post_id );
 
@@ -1173,10 +1434,21 @@ function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $bl
         }
     }
 
+    // If the 25-second guard stopped the loop, only $processed of the fetched
+    // IDs were examined. scanned and next_offset are derived from that count so
+    // the caller resumes at the first unexamined post instead of skipping the
+    // rest of the batch - and a timeout on the last batch is not reported as a
+    // complete scan. has_more is true after a timeout because this batch itself
+    // still has posts to examine.
+    $timed_out = $processed < count( $ids );
+
     return [
         'posts'       => $matches,
-        'has_more'    => count( $ids ) === $batch_size,
-        'next_offset' => $batch_offset + $batch_size,
+        'has_more'    => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+        'next_offset' => $batch_offset + $processed,
+        'scanned'    => $processed,
+        'timed_out'    => $timed_out,
+        'limit'    => $limit,
     ];
 }
 
@@ -1193,18 +1465,18 @@ function fbps_ajax_search_block() {
             throw new Exception( 'unauthorized' );
         }
 
+        // Proper input handling with wp_unslash()
+        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
+        $block = isset( $_POST['block_name'] ) ? sanitize_text_field( wp_unslash( $_POST['block_name'] ) ) : '';
+        $class_name = isset( $_POST['class_name'] ) ? sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) : '';
+        $anchor_name = isset( $_POST['anchor_name'] ) ? sanitize_text_field( wp_unslash( $_POST['anchor_name'] ) ) : '';
+        $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
+
         // Rate limiting with IP tracking
         $rate_check = fbps_check_rate_limit();
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
-
-        // Proper input handling with wp_unslash()
-        $block = isset( $_POST['block_name'] ) ? sanitize_text_field( wp_unslash( $_POST['block_name'] ) ) : '';
-        $class_name = isset( $_POST['class_name'] ) ? sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) : '';
-        $anchor_name = isset( $_POST['anchor_name'] ) ? sanitize_text_field( wp_unslash( $_POST['anchor_name'] ) ) : '';
-        $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
-        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
 
         $has_attribute_search = ! empty( $class_name ) || ! empty( $anchor_name );
 
@@ -1255,9 +1527,15 @@ function fbps_ajax_search_block() {
 
         // Use attribute search when class/anchor is provided, otherwise standard block search
         if ( $has_attribute_search ) {
-            $search_result = fbps_get_posts_with_attribute( $class_name, $anchor_name, $block, $post_types, $batch_offset, 100 );
+            $search_result = fbps_get_posts_with_attribute( $class_name, $anchor_name, $block, $post_types, $batch_offset, FBPS_BATCH_SIZE );
         } else {
-            $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, 100 );
+            $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, FBPS_BATCH_SIZE );
+        }
+
+        // A batch that timed out before examining a single post would hand the
+        // client the same offset back and loop forever. Surface it instead.
+        if ( ! empty( $search_result['timed_out'] ) && 0 === $search_result['scanned'] ) {
+            throw new Exception( 'timeout' );
         }
         $results = [];
 
@@ -1275,6 +1553,9 @@ function fbps_ajax_search_block() {
                 'view_link' => esc_url_raw( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
                 'date'      => $post_date,
+                // Formatted server-side with the site's date format and locale;
+                // the raw value above stays for sorting.
+                'date_display' => mysql2date( get_option( 'date_format' ), $post_date ),
                 'className' => $attrs['className'],
                 'anchor'    => $attrs['anchor'],
             ];
@@ -1295,6 +1576,18 @@ function fbps_ajax_search_block() {
             'progress' => round( $progress, 1 ),
         ];
 
+        // On the last batch, say whether the scan stopped at the query limit
+        // rather than at the end of the content. Batches walk oldest-first, so a
+        // capped scan never reaches the newest posts; without this the UI would
+        // report a confident "no results" for a block used only in recent content.
+        if ( ! $search_result['has_more'] ) {
+            $scanned_total = $batch_offset + $search_result['scanned'];
+            $total_all     = fbps_get_total_posts_count( $post_types );
+            $response['scanned']     = $scanned_total;
+            $response['total_posts'] = $total_all;
+            $response['truncated']   = ( $scanned_total >= $search_result['limit'] ) && ( $total_all > $scanned_total );
+        }
+
         if ( $batch_offset === 0 ) {
             $response['total_posts'] = $total_posts;
         }
@@ -1306,6 +1599,7 @@ function fbps_ajax_search_block() {
         $error_messages = [
             'unauthorized'   => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
             'rate_limit'     => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
+            'timeout'      => __( 'The search timed out before it could examine any posts. Try fewer post types.', 'find-blocks-patterns-shortcodes' ),
             'empty_input'    => __( 'Enter a block name, CSS class, or HTML anchor', 'find-blocks-patterns-shortcodes' ),
             'invalid_input'  => __( 'Invalid block name format. Use: namespace/block-name', 'find-blocks-patterns-shortcodes' ),
             'invalid_class'  => __( 'Invalid CSS class format. Use only letters, numbers, hyphens, and underscores.', 'find-blocks-patterns-shortcodes' ),
@@ -1330,16 +1624,16 @@ function fbps_ajax_search_pattern() {
             throw new Exception( 'unauthorized' );
         }
 
+        // Proper input handling with wp_unslash()
+        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
+        $pattern_id = isset( $_POST['pattern_id'] ) ? absint( $_POST['pattern_id'] ) : 0;
+        $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
+
         // Rate limiting with IP tracking
         $rate_check = fbps_check_rate_limit();
         if ( is_wp_error( $rate_check ) ) {
             throw new Exception( 'rate_limit' );
         }
-
-        // Proper input handling with wp_unslash()
-        $pattern_id = isset( $_POST['pattern_id'] ) ? absint( $_POST['pattern_id'] ) : 0;
-        $post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
-        $batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
 
         if ( empty( $pattern_id ) ) {
             throw new Exception( 'empty_input' );
@@ -1358,7 +1652,13 @@ function fbps_ajax_search_pattern() {
             $total_posts = fbps_get_total_posts_count( $post_types );
         }
 
-        $search_result = fbps_get_posts_using_pattern( $pattern_id, $post_types, $batch_offset, 100 );
+        $search_result = fbps_get_posts_using_pattern( $pattern_id, $post_types, $batch_offset, FBPS_BATCH_SIZE );
+
+        // A batch that timed out before examining a single post would hand the
+        // client the same offset back and loop forever. Surface it instead.
+        if ( ! empty( $search_result['timed_out'] ) && 0 === $search_result['scanned'] ) {
+            throw new Exception( 'timeout' );
+        }
         $results = [];
 
         foreach ( $search_result['posts'] as $post ) {
@@ -1372,6 +1672,9 @@ function fbps_ajax_search_pattern() {
                 'view_link' => esc_url_raw( get_permalink( $post ) ),
                 'type'      => sanitize_key( $post->post_type ),
                 'date'      => $post_date,
+                // Formatted server-side with the site's date format and locale;
+                // the raw value above stays for sorting.
+                'date_display' => mysql2date( get_option( 'date_format' ), $post_date ),
             ];
         }
 
@@ -1390,6 +1693,18 @@ function fbps_ajax_search_pattern() {
             'progress' => round( $progress, 1 ),
         ];
 
+        // On the last batch, say whether the scan stopped at the query limit
+        // rather than at the end of the content. Batches walk oldest-first, so a
+        // capped scan never reaches the newest posts; without this the UI would
+        // report a confident "no results" for a block used only in recent content.
+        if ( ! $search_result['has_more'] ) {
+            $scanned_total = $batch_offset + $search_result['scanned'];
+            $total_all     = fbps_get_total_posts_count( $post_types );
+            $response['scanned']     = $scanned_total;
+            $response['total_posts'] = $total_all;
+            $response['truncated']   = ( $scanned_total >= $search_result['limit'] ) && ( $total_all > $scanned_total );
+        }
+
         if ( $batch_offset === 0 ) {
             $response['total_posts'] = $total_posts;
         }
@@ -1401,6 +1716,7 @@ function fbps_ajax_search_pattern() {
         $error_messages = [
             'unauthorized'    => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
             'rate_limit'      => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
+            'timeout'       => __( 'The search timed out before it could examine any posts. Try fewer post types.', 'find-blocks-patterns-shortcodes' ),
             'empty_input'     => __( 'Pattern ID is required', 'find-blocks-patterns-shortcodes' ),
             'invalid_pattern' => __( 'Invalid pattern ID', 'find-blocks-patterns-shortcodes' ),
         ];
@@ -1423,16 +1739,16 @@ function fbps_ajax_search_shortcode() {
 			throw new Exception( 'unauthorized' );
 		}
 
+		// Proper input handling with wp_unslash()
+		$batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
+		$shortcode_name = isset( $_POST['shortcode_name'] ) ? sanitize_text_field( wp_unslash( $_POST['shortcode_name'] ) ) : '';
+		$post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
+
 		// Rate limiting with IP tracking
 		$rate_check = fbps_check_rate_limit();
 		if ( is_wp_error( $rate_check ) ) {
 			throw new Exception( 'rate_limit' );
 		}
-
-		// Proper input handling with wp_unslash()
-		$shortcode_name = isset( $_POST['shortcode_name'] ) ? sanitize_text_field( wp_unslash( $_POST['shortcode_name'] ) ) : '';
-		$post_types = isset( $_POST['post_types'] ) ? array_map( 'sanitize_key', (array) $_POST['post_types'] ) : [];
-		$batch_offset = isset( $_POST['batch_offset'] ) ? absint( $_POST['batch_offset'] ) : 0;
 
 		if ( empty( $shortcode_name ) ) {
 			throw new Exception( 'empty_input' );
@@ -1461,7 +1777,13 @@ function fbps_ajax_search_shortcode() {
 			$total_posts = fbps_get_total_posts_count( $post_types );
 		}
 
-		$search_result = fbps_get_posts_using_shortcode( $shortcode_name, $post_types, $batch_offset, 100 );
+		$search_result = fbps_get_posts_using_shortcode( $shortcode_name, $post_types, $batch_offset, FBPS_BATCH_SIZE );
+
+		// A batch that timed out before examining a single post would hand the
+		// client the same offset back and loop forever. Surface it instead.
+		if ( ! empty( $search_result['timed_out'] ) && 0 === $search_result['scanned'] ) {
+			throw new Exception( 'timeout' );
+		}
 
 		$results = [];
 
@@ -1476,6 +1798,9 @@ function fbps_ajax_search_shortcode() {
 				'view_link' => esc_url_raw( get_permalink( $post ) ),
 				'type'      => sanitize_key( $post->post_type ),
 				'date'      => $post_date,
+				// Formatted server-side with the site's date format and locale;
+				// the raw value above stays for sorting.
+				'date_display' => mysql2date( get_option( 'date_format' ), $post_date ),
 			];
 		}
 
@@ -1494,6 +1819,18 @@ function fbps_ajax_search_shortcode() {
 			'progress' => round( $progress, 1 ),
 		];
 
+		// On the last batch, say whether the scan stopped at the query limit
+		// rather than at the end of the content. Batches walk oldest-first, so a
+		// capped scan never reaches the newest posts; without this the UI would
+		// report a confident "no results" for a block used only in recent content.
+		if ( ! $search_result['has_more'] ) {
+			$scanned_total = $batch_offset + $search_result['scanned'];
+			$total_all     = fbps_get_total_posts_count( $post_types );
+			$response['scanned']     = $scanned_total;
+			$response['total_posts'] = $total_all;
+			$response['truncated']   = ( $scanned_total >= $search_result['limit'] ) && ( $total_all > $scanned_total );
+		}
+
 		if ( $batch_offset === 0 ) {
 			$response['total_posts'] = $total_posts;
 		}
@@ -1506,6 +1843,7 @@ function fbps_ajax_search_shortcode() {
 		$error_messages = [
 			'unauthorized'  => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
 			'rate_limit'    => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
+			'timeout'     => __( 'The search timed out before it could examine any posts. Try fewer post types.', 'find-blocks-patterns-shortcodes' ),
 			'empty_input'   => __( 'Shortcode name is required', 'find-blocks-patterns-shortcodes' ),
 			'invalid_input' => __( 'Invalid shortcode name format', 'find-blocks-patterns-shortcodes' ),
 		];
@@ -1547,7 +1885,7 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
          * : Output format (table, csv, json, ids) (default: table)
          *
          * [--limit=<limit>]
-         * : Maximum number of posts to search (default: 1000)
+         * : Maximum number of posts to scan, oldest first (default: the fbps_query_limit value, 500; hard cap 1000)
          *
          * ## EXAMPLES
          *
@@ -1575,7 +1913,14 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             $format = isset( $assoc_args['format'] ) ? $assoc_args['format'] : 'table';
 
             // Parse limit
-            $limit = isset( $assoc_args['limit'] ) ? absint( $assoc_args['limit'] ) : 1000;
+            // --limit is the number of posts to scan, the same thing the fbps_query_limit
+            // filter controls, so it is applied through that filter for this run. The
+            // accessor still enforces the 1000 hard cap and the >= 1 floor.
+            if ( isset( $assoc_args['limit'] ) ) {
+                $cli_limit = absint( $assoc_args['limit'] );
+                add_filter( 'fbps_query_limit', function () use ( $cli_limit ) { return $cli_limit; } );
+            }
+            $limit = fbps_get_query_limit();
 
             WP_CLI::log( sprintf( 'Searching for block: %s', $block_name ) );
             WP_CLI::log( sprintf( 'Post types: %s', implode( ', ', $post_types ) ) );
@@ -1583,22 +1928,22 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             // Search in batches
             $all_matches = [];
             $offset = 0;
-            $batch_size = 100;
+            $scanned = 0;
 
             do {
-                $result = fbps_get_posts_using_block( $block_name, $post_types, $offset, $batch_size );
+                $result = fbps_get_posts_using_block( $block_name, $post_types, $offset, FBPS_BATCH_SIZE );
                 $all_matches = array_merge( $all_matches, $result['posts'] );
+                $scanned += $result['scanned'];
 
-                WP_CLI::log( sprintf( 'Searched %d posts... found %d matches so far', $offset + $batch_size, count( $all_matches ) ) );
+                WP_CLI::log( sprintf( 'Searched %d posts... found %d matches so far', $scanned, count( $all_matches ) ) );
 
                 $offset = $result['next_offset'];
-
-                // Respect limit
-                if ( count( $all_matches ) >= $limit ) {
-                    break;
-                }
-
             } while ( $result['has_more'] );
+
+            $total_all = fbps_get_total_posts_count( $post_types );
+            if ( $scanned >= $limit && $total_all > $scanned ) {
+                WP_CLI::warning( sprintf( 'Scanned the first %d of %d posts (oldest first). Use --limit, up to 1000, to scan more.', $scanned, $total_all ) );
+            }
 
             WP_CLI::success( sprintf( 'Found %d posts using block: %s', count( $all_matches ), $block_name ) );
 
