@@ -613,6 +613,7 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
 
     $matches = [];
     $start_time = microtime( true );
+    $processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
 
     foreach ( $ids as $post_id ) {
@@ -621,6 +622,8 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
             fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
             break;
         }
+
+        $processed++;
 
         $post_id = absint( $post_id ); // Extra validation
 
@@ -639,11 +642,20 @@ function fbps_get_posts_using_pattern( $pattern_id, $post_types = [], $batch_off
         }
     }
 
+    // If the 25-second guard stopped the loop, only $processed of the fetched
+    // IDs were examined. scanned and next_offset are derived from that count so
+    // the caller resumes at the first unexamined post instead of skipping the
+    // rest of the batch - and a timeout on the last batch is not reported as a
+    // complete scan. has_more is true after a timeout because this batch itself
+    // still has posts to examine.
+    $timed_out = $processed < count( $ids );
+
     return [
         'posts' => $matches,
-        'has_more' => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
-        'next_offset' => $batch_offset + $batch_size,
-        'scanned' => count( $ids ),
+        'has_more' => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+        'next_offset' => $batch_offset + $processed,
+        'scanned' => $processed,
+        'timed_out' => $timed_out,
         'limit' => $limit,
     ];
 }
@@ -747,6 +759,7 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 
 	$matches = [];
 	$start_time = microtime( true );
+	$processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
 	foreach ( $ids as $post_id ) {
 		// Timeout protection
@@ -754,6 +767,8 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 			fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
 			break;
 		}
+
+		$processed++;
 
 		$post_id = absint( $post_id ); // Extra validation
 
@@ -773,11 +788,20 @@ function fbps_get_posts_using_shortcode( $shortcode_name, $post_types = [], $bat
 		}
 	}
 
+	// If the 25-second guard stopped the loop, only $processed of the fetched
+	// IDs were examined. scanned and next_offset are derived from that count so
+	// the caller resumes at the first unexamined post instead of skipping the
+	// rest of the batch - and a timeout on the last batch is not reported as a
+	// complete scan. has_more is true after a timeout because this batch itself
+	// still has posts to examine.
+	$timed_out = $processed < count( $ids );
+
 	return [
 		'posts' => $matches,
-		'has_more' => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
-		'next_offset' => $batch_offset + $batch_size,
-		'scanned' => count( $ids ),
+		'has_more' => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+		'next_offset' => $batch_offset + $processed,
+		'scanned' => $processed,
+		'timed_out' => $timed_out,
 		'limit' => $limit,
 	];
 }
@@ -856,6 +880,7 @@ function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offse
 
     $matches = [];
     $start_time = microtime( true );
+    $processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
     foreach ( $ids as $post_id ) {
         // Timeout protection
@@ -863,6 +888,8 @@ function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offse
             fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
             break;
         }
+
+        $processed++;
 
         $post_id = absint( $post_id ); // Extra validation
 
@@ -882,11 +909,20 @@ function fbps_get_posts_using_block( $block_name, $post_types = [], $batch_offse
         }
     }
 
+    // If the 25-second guard stopped the loop, only $processed of the fetched
+    // IDs were examined. scanned and next_offset are derived from that count so
+    // the caller resumes at the first unexamined post instead of skipping the
+    // rest of the batch - and a timeout on the last batch is not reported as a
+    // complete scan. has_more is true after a timeout because this batch itself
+    // still has posts to examine.
+    $timed_out = $processed < count( $ids );
+
     return [
         'posts' => $matches,
-        'has_more' => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
-        'next_offset' => $batch_offset + $batch_size,
-        'scanned' => count( $ids ),
+        'has_more' => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+        'next_offset' => $batch_offset + $processed,
+        'scanned' => $processed,
+        'timed_out' => $timed_out,
         'limit' => $limit,
     ];
 }
@@ -1372,12 +1408,15 @@ function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $bl
 
     $matches    = [];
     $start_time = microtime( true );
+    $processed = 0; // IDs actually examined; the timeout below can stop the loop early
 
     foreach ( $ids as $post_id ) {
         if ( microtime( true ) - $start_time > 25 ) {
             fbps_log_security_event( 'query_timeout', [ 'processed' => count( $matches ), 'batch_offset' => $batch_offset ] );
             break;
         }
+
+        $processed++;
 
         $post_id = absint( $post_id );
 
@@ -1395,11 +1434,20 @@ function fbps_get_posts_with_attribute( $class_name = '', $anchor_name = '', $bl
         }
     }
 
+    // If the 25-second guard stopped the loop, only $processed of the fetched
+    // IDs were examined. scanned and next_offset are derived from that count so
+    // the caller resumes at the first unexamined post instead of skipping the
+    // rest of the batch - and a timeout on the last batch is not reported as a
+    // complete scan. has_more is true after a timeout because this batch itself
+    // still has posts to examine.
+    $timed_out = $processed < count( $ids );
+
     return [
         'posts'       => $matches,
-        'has_more'    => count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit,
-        'next_offset' => $batch_offset + $batch_size,
-        'scanned'    => count( $ids ),
+        'has_more'    => $timed_out ? $processed > 0 : ( count( $ids ) === $batch_size && ( $batch_offset + $batch_size ) < $limit ),
+        'next_offset' => $batch_offset + $processed,
+        'scanned'    => $processed,
+        'timed_out'    => $timed_out,
         'limit'    => $limit,
     ];
 }
@@ -1483,6 +1531,12 @@ function fbps_ajax_search_block() {
         } else {
             $search_result = fbps_get_posts_using_block( $block, $post_types, $batch_offset, FBPS_BATCH_SIZE );
         }
+
+        // A batch that timed out before examining a single post would hand the
+        // client the same offset back and loop forever. Surface it instead.
+        if ( ! empty( $search_result['timed_out'] ) && 0 === $search_result['scanned'] ) {
+            throw new Exception( 'timeout' );
+        }
         $results = [];
 
         foreach ( $search_result['posts'] as $post ) {
@@ -1545,6 +1599,7 @@ function fbps_ajax_search_block() {
         $error_messages = [
             'unauthorized'   => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
             'rate_limit'     => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
+            'timeout'      => __( 'The search timed out before it could examine any posts. Try fewer post types.', 'find-blocks-patterns-shortcodes' ),
             'empty_input'    => __( 'Enter a block name, CSS class, or HTML anchor', 'find-blocks-patterns-shortcodes' ),
             'invalid_input'  => __( 'Invalid block name format. Use: namespace/block-name', 'find-blocks-patterns-shortcodes' ),
             'invalid_class'  => __( 'Invalid CSS class format. Use only letters, numbers, hyphens, and underscores.', 'find-blocks-patterns-shortcodes' ),
@@ -1598,6 +1653,12 @@ function fbps_ajax_search_pattern() {
         }
 
         $search_result = fbps_get_posts_using_pattern( $pattern_id, $post_types, $batch_offset, FBPS_BATCH_SIZE );
+
+        // A batch that timed out before examining a single post would hand the
+        // client the same offset back and loop forever. Surface it instead.
+        if ( ! empty( $search_result['timed_out'] ) && 0 === $search_result['scanned'] ) {
+            throw new Exception( 'timeout' );
+        }
         $results = [];
 
         foreach ( $search_result['posts'] as $post ) {
@@ -1655,6 +1716,7 @@ function fbps_ajax_search_pattern() {
         $error_messages = [
             'unauthorized'    => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
             'rate_limit'      => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
+            'timeout'       => __( 'The search timed out before it could examine any posts. Try fewer post types.', 'find-blocks-patterns-shortcodes' ),
             'empty_input'     => __( 'Pattern ID is required', 'find-blocks-patterns-shortcodes' ),
             'invalid_pattern' => __( 'Invalid pattern ID', 'find-blocks-patterns-shortcodes' ),
         ];
@@ -1717,6 +1779,12 @@ function fbps_ajax_search_shortcode() {
 
 		$search_result = fbps_get_posts_using_shortcode( $shortcode_name, $post_types, $batch_offset, FBPS_BATCH_SIZE );
 
+		// A batch that timed out before examining a single post would hand the
+		// client the same offset back and loop forever. Surface it instead.
+		if ( ! empty( $search_result['timed_out'] ) && 0 === $search_result['scanned'] ) {
+			throw new Exception( 'timeout' );
+		}
+
 		$results = [];
 
 		foreach ( $search_result['posts'] as $post ) {
@@ -1775,6 +1843,7 @@ function fbps_ajax_search_shortcode() {
 		$error_messages = [
 			'unauthorized'  => __( 'Access denied', 'find-blocks-patterns-shortcodes' ),
 			'rate_limit'    => __( 'Too many requests. Please wait.', 'find-blocks-patterns-shortcodes' ),
+			'timeout'     => __( 'The search timed out before it could examine any posts. Try fewer post types.', 'find-blocks-patterns-shortcodes' ),
 			'empty_input'   => __( 'Shortcode name is required', 'find-blocks-patterns-shortcodes' ),
 			'invalid_input' => __( 'Invalid shortcode name format', 'find-blocks-patterns-shortcodes' ),
 		];
