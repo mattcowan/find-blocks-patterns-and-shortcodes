@@ -3,10 +3,11 @@
  * journeys. Generic Guidepup mechanics live in sr-core.js; everything here
  * knows about this plugin's admin page.
  *
- * The page under test is a single Tools submenu screen with three independent
- * search forms (block, synced pattern, shortcode) that all render into their
- * own results container. There are no dialogs and no iframes, so the journeys
- * are flat: load the page, drive one form, listen.
+ * The page under test is a single Tools submenu screen with three search forms
+ * (block, synced pattern, shortcode) behind a tab list. Only the selected
+ * tab's form is visible; Blocks is selected on load. Each form renders into
+ * its own results container. There are no dialogs and no iframes, so the
+ * journeys are flat: load the page, select a tab, drive its form, listen.
  */
 const core = require('./sr-core');
 
@@ -37,6 +38,8 @@ const TITLE = /Find Blocks, Patterns (?:&|and) Shortcodes.*Word ?Press/i;
 /** Selectors for the three search surfaces, kept in one place. */
 const SURFACES = {
   block: {
+    tab: '#fbps-tab-block',
+    panel: '#fbps-panel-block',
     form: '.fbps-search-section[aria-label*="block usage"]',
     results: '#fbps-search-results',
     progress: '#fbps-progress',
@@ -44,6 +47,8 @@ const SURFACES = {
     cancelButton: '#fbps-cancel-button',
   },
   pattern: {
+    tab: '#fbps-tab-pattern',
+    panel: '#fbps-panel-pattern',
     form: '.fbps-search-section[aria-label*="synced pattern"]',
     results: '#fbps-pattern-search-results',
     progress: '#fbps-pattern-progress',
@@ -51,6 +56,8 @@ const SURFACES = {
     cancelButton: '#fbps-pattern-cancel-button',
   },
   shortcode: {
+    tab: '#fbps-tab-shortcode',
+    panel: '#fbps-panel-shortcode',
     form: '.fbps-search-section[aria-label*="shortcode usage"]',
     results: '#fbps-shortcode-search-results',
     progress: '#fbps-shortcode-progress',
@@ -72,7 +79,19 @@ async function gotoAdminPage(page, nvda) {
 }
 
 /**
- * Run a search and wait for it to finish.
+ * Select a surface's tab so its form is visible, and wait for the panel.
+ *
+ * Setup only, like runSearch: a Playwright click, not an NVDA key, so nothing
+ * is captured. search-tabs.sr.spec.js covers the tabs as NVDA hears them.
+ */
+async function selectTab(page, surface) {
+  const s = SURFACES[surface];
+  await page.click(s.tab);
+  await page.waitForSelector(s.panel, { state: 'visible' });
+}
+
+/**
+ * Run a search and wait for it to finish. Selects the surface's tab first.
  *
  * Setup only - nothing here is captured, because speech is logged only around
  * a Guidepup command. Journeys that care about what a search announces should
@@ -80,6 +99,7 @@ async function gotoAdminPage(page, nvda) {
  */
 async function runSearch(page, surface, fill) {
   const s = SURFACES[surface];
+  await selectTab(page, surface);
   await fill(page);
   await page.click(s.searchButton);
   await page.waitForFunction(
@@ -156,6 +176,7 @@ module.exports = {
   TITLE,
   SURFACES,
   gotoAdminPage,
+  selectTab,
   runSearch,
   fillBlockName,
   selectFirstOption,

@@ -2,9 +2,9 @@
 Contributors: matthewneilcowan
 Tags: gutenberg, blocks, search, admin, content
 Requires at least: 5.0
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 7.0
-Stable tag: 1.1.3
+Stable tag: 1.1.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -78,7 +78,7 @@ Yes! Use `wp block-usage search core/paragraph` for command-line searches.
 
 = How do I search for synced patterns? =
 
-Use the "Search for Synced Pattern Usage" section to find where reusable blocks/patterns are used.
+Select the Patterns tab to find where reusable blocks/patterns are used.
 
 == Screenshots ==
 
@@ -86,6 +86,10 @@ Use the "Search for Synced Pattern Usage" section to find where reusable blocks/
 2. Search results table with sortable columns and export csv button
 
 == Changelog ==
+
+= 1.1.4 =
+* The Tools page now shows one search form at a time. Select the Blocks, Patterns, or Shortcodes tab to show its form. The Blocks tab is selected when the page opens. To move between tabs with the keyboard, use the Left and Right arrow keys. Switching tabs does not start a search and does not clear the results.
+* Tested up to WordPress 7.1.
 
 = 1.1.3 =
 * Fixed synced pattern search, which could not find any content. The search now uses the WordPress block parser instead of a text match, so it also finds patterns that use pattern overrides or a renamed instance.

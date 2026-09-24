@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Find Blocks, Patterns & Shortcodes** is a WordPress plugin that audits site content by locating which posts/pages use specific Gutenberg blocks, synced patterns, or shortcodes. It provides an admin UI with progressive batch search, sortable results, CSV export, and WP-CLI commands.
 
-- **WordPress:** 5.0+, **PHP:** 7.0+, **Tested up to:** 6.9
+- **WordPress:** 5.0+, **PHP:** 7.0+, **Tested up to:** 7.1
 - **Text Domain:** `find-blocks-patterns-shortcodes`
 - **Prefix:** `fbps_` for all functions, transients, and identifiers
 - **Custom Capability:** `use_find_blocks_patterns_shortcodes`

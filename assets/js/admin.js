@@ -50,6 +50,57 @@
             }
         });
 
+        /**
+         * Search-type tabs (WAI-ARIA tabs pattern, automatic activation).
+         *
+         * Only one form shows at a time. Selecting a tab only swaps which
+         * panel is visible: it does not start a search, cancel one, or touch
+         * the shared results area. Only the selected tab is in the Tab order
+         * (roving tabindex); Left/Right wrap around, Home/End jump to the
+         * ends.
+         */
+        var $tabs = $('.fbps-tabs [role="tab"]');
+
+        function selectTab($tab, moveFocus) {
+            $tabs.each(function() {
+                var $t = $(this);
+                var selected = $t.is($tab);
+                $t.attr('aria-selected', selected ? 'true' : 'false')
+                  .attr('tabindex', selected ? '0' : '-1');
+                $('#' + $t.attr('aria-controls')).prop('hidden', !selected);
+            });
+            if (moveFocus) {
+                $tab.trigger('focus');
+            }
+        }
+
+        $tabs.on('click', function() {
+            selectTab($(this), false);
+        });
+
+        $tabs.on('keydown', function(e) {
+            var index = $tabs.index(this);
+            var next;
+            switch (e.key) {
+                case 'ArrowRight':
+                    next = (index + 1) % $tabs.length;
+                    break;
+                case 'ArrowLeft':
+                    next = (index - 1 + $tabs.length) % $tabs.length;
+                    break;
+                case 'Home':
+                    next = 0;
+                    break;
+                case 'End':
+                    next = $tabs.length - 1;
+                    break;
+                default:
+                    return;
+            }
+            e.preventDefault();
+            selectTab($tabs.eq(next), true);
+        });
+
         // Refresh nonce every 5 minutes (more frequent for long operations)
         setInterval(function() {
             $.post(fbpsData.ajaxUrl, {

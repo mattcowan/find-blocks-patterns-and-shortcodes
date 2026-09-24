@@ -42,6 +42,7 @@ test('block search: form controls announce, and results announce when they arriv
   const summary = h.summarizeStops(stops);
 
   // --- Run the search through NVDA so the announcement is captured ---
+  await h.selectTab(page, 'block');
   await page.fill('#fbps-block-name', 'core/paragraph');
   const searchPhrase = await h.activate(
     page,
