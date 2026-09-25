@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Find Blocks, Patterns & Shortcodes
  * Description: A powerful finder tool to audit your site. Locate instances of any Block, Pattern, or Shortcode and export the full usage report to CSV.
- * Version:     1.1.3
+ * Version:     1.1.4
  * Author:      Matthew Cowan
  * Author URI:  https://mnc4.com
  * Text Domain: find-blocks-patterns-shortcodes
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin version constant
-define( 'FBPS_VERSION', '1.1.3' );
+define( 'FBPS_VERSION', '1.1.4' );
 define( 'FBPS_BATCH_SIZE', 100 ); // posts scanned per AJAX batch
 
 /**
@@ -968,7 +968,8 @@ function fbps_set_security_headers() {
 }
 
 /**
- * Renders the admin page with a dynamic search field.
+ * Renders the admin page: a tab list that shows one search form at a time
+ * (block, synced pattern, shortcode), then the shared results area.
  */
 function fbps_render_admin_page() {
     // Get all public post types
@@ -987,6 +988,27 @@ function fbps_render_admin_page() {
     ?>
     <div class="wrap">
         <h1><?php esc_html_e( 'Find Blocks, Patterns & Shortcodes', 'find-blocks-patterns-shortcodes' ); ?></h1>
+        <?php // One form shows at a time. The markup follows the WAI-ARIA
+              // tabs pattern: admin.js moves focus and selection between the
+              // tabs with the arrow keys (roving tabindex) and toggles
+              // `hidden` on the panels. Switching tabs never runs a search and
+              // never clears the shared results area below. The three
+              // progress regions stay outside the panels so that a search's
+              // role="status" announcement is never inside a hidden panel.
+              // The one Cancel button sits with them for the same reason:
+              // only one search runs at a time, and its Cancel must stay
+              // reachable after the user switches to another tab.
+              //
+              // The Patterns and Shortcodes panels take tabindex="0" because
+              // each opens with a heading that cannot take focus, so Tab from
+              // the tab list would skip it. The Blocks panel opens with a text
+              // field, so it needs no extra Tab stop. ?>
+        <div class="fbps-tabs" role="tablist" aria-label="<?php esc_attr_e( 'Search type', 'find-blocks-patterns-shortcodes' ); ?>">
+            <button type="button" role="tab" id="fbps-tab-block" class="fbps-tab" aria-selected="true" aria-controls="fbps-panel-block"><?php esc_html_e( 'Blocks', 'find-blocks-patterns-shortcodes' ); ?></button>
+            <button type="button" role="tab" id="fbps-tab-pattern" class="fbps-tab" aria-selected="false" aria-controls="fbps-panel-pattern" tabindex="-1"><?php esc_html_e( 'Patterns', 'find-blocks-patterns-shortcodes' ); ?></button>
+            <button type="button" role="tab" id="fbps-tab-shortcode" class="fbps-tab" aria-selected="false" aria-controls="fbps-panel-shortcode" tabindex="-1"><?php esc_html_e( 'Shortcodes', 'find-blocks-patterns-shortcodes' ); ?></button>
+        </div>
+        <div role="tabpanel" id="fbps-panel-block" class="fbps-tabpanel" aria-labelledby="fbps-tab-block">
         <div class="fbps-search-section" role="search" aria-label="<?php esc_attr_e( 'Search for block usage', 'find-blocks-patterns-shortcodes' ); ?>">
             <div class="fbps-search-field">
                 <label for="fbps-block-name"><?php esc_html_e( 'Block Name:', 'find-blocks-patterns-shortcodes' ); ?></label>
@@ -1041,11 +1063,10 @@ function fbps_render_admin_page() {
             </div>
             <div class="fbps-search-actions">
                 <button id="fbps-search-button" class="button button-primary"><?php esc_html_e( 'Search', 'find-blocks-patterns-shortcodes' ); ?></button>
-                <button id="fbps-cancel-button" class="button" style="display:none;"><?php esc_html_e( 'Cancel', 'find-blocks-patterns-shortcodes' ); ?></button>
             </div>
         </div>
-        <div id="fbps-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
-        <hr style="margin: 30px 0;">
+        </div>
+        <div role="tabpanel" id="fbps-panel-pattern" class="fbps-tabpanel" aria-labelledby="fbps-tab-pattern" tabindex="0" hidden>
         <h2><?php esc_html_e( 'Search for Synced Pattern Usage', 'find-blocks-patterns-shortcodes' ); ?></h2>
         <div class="fbps-search-section" role="search" aria-label="<?php esc_attr_e( 'Search for synced pattern usage', 'find-blocks-patterns-shortcodes' ); ?>">
             <div class="fbps-search-field">
@@ -1079,11 +1100,10 @@ function fbps_render_admin_page() {
             </div>
             <div class="fbps-search-actions">
                 <button id="fbps-pattern-search-button" class="button button-primary"><?php esc_html_e( 'Search Pattern', 'find-blocks-patterns-shortcodes' ); ?></button>
-                <button id="fbps-pattern-cancel-button" class="button" style="display:none;"><?php esc_html_e( 'Cancel', 'find-blocks-patterns-shortcodes' ); ?></button>
             </div>
         </div>
-        <div id="fbps-pattern-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
-        <hr style="margin: 30px 0;">
+        </div>
+        <div role="tabpanel" id="fbps-panel-shortcode" class="fbps-tabpanel" aria-labelledby="fbps-tab-shortcode" tabindex="0" hidden>
         <h2><?php esc_html_e( 'Search for Shortcode Usage', 'find-blocks-patterns-shortcodes' ); ?></h2>
         <div class="fbps-search-section" role="search" aria-label="<?php esc_attr_e( 'Search for shortcode usage', 'find-blocks-patterns-shortcodes' ); ?>">
             <div class="fbps-search-field">
@@ -1117,10 +1137,15 @@ function fbps_render_admin_page() {
             </div>
             <div class="fbps-search-actions">
                 <button id="fbps-shortcode-search-button" class="button button-primary"><?php esc_html_e( 'Search Shortcode', 'find-blocks-patterns-shortcodes' ); ?></button>
-                <button id="fbps-shortcode-cancel-button" class="button" style="display:none;"><?php esc_html_e( 'Cancel', 'find-blocks-patterns-shortcodes' ); ?></button>
             </div>
         </div>
-        <div id="fbps-shortcode-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
+        </div>
+        <div class="fbps-search-status">
+            <div id="fbps-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
+            <div id="fbps-pattern-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
+            <div id="fbps-shortcode-progress" class="fbps-progress-container" role="status" aria-live="polite"></div>
+            <button id="fbps-cancel-button" class="button" style="display:none;"><?php esc_html_e( 'Cancel', 'find-blocks-patterns-shortcodes' ); ?></button>
+        </div>
         <hr style="margin: 30px 0;">
         <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
             <h2 style="margin: 0;"><?php esc_html_e( 'Results', 'find-blocks-patterns-shortcodes' ); ?></h2>

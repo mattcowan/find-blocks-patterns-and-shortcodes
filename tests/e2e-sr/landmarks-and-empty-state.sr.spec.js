@@ -53,10 +53,12 @@ test('empty results containers are not landmarks; a filled one is', async ({ pag
   expect(after.shortcode.ariaLabel).toBeNull();
 
   // --- Count what NVDA can reach by landmark ---
+  // Landmarks inside a hidden tab panel are out of the accessibility tree,
+  // so they are not counted.
   const landmarkCount = await page.evaluate(() =>
-    document.querySelectorAll(
+    [...document.querySelectorAll(
       '.wrap [role="region"], .wrap [role="search"], .wrap main, .wrap nav'
-    ).length
+    )].filter((el) => !el.closest('[hidden]')).length
   );
 
   const log = await h.saveSpeechLog(nvda, 'landmarks-and-empty-state', {
@@ -65,8 +67,8 @@ test('empty results containers are not landmarks; a filled one is', async ({ pag
     landmarkCount,
   });
 
-  // Three search landmarks plus one populated results region.
-  expect(landmarkCount).toBe(4);
+  // The visible tab's search landmark plus one populated results region.
+  expect(landmarkCount).toBe(2);
 
   expect(log).toBeDefined();
 });

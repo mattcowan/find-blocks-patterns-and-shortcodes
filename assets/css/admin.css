@@ -18,6 +18,58 @@
     margin-bottom: 20px;
 }
 
+/*
+ * Search-type tabs. Styled after core's .nav-tab. The selected tab gets a
+ * thicker top border, not only a different color, so it stays distinct in
+ * forced-colors mode, where backgrounds are overridden but borders remain.
+ */
+.fbps-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    border-bottom: 1px solid #c3c4c7;
+    margin-bottom: 16px;
+}
+
+.fbps-tab {
+    margin: 0 0 -1px;
+    padding: 5px 14px;
+    border: 1px solid #c3c4c7;
+    background: #dcdcde;
+    color: #50575e;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.71428571;
+    cursor: pointer;
+}
+
+.fbps-tab:hover {
+    background: #fff;
+    color: #3c434a;
+}
+
+.fbps-tab[aria-selected="true"] {
+    padding-top: 3px;
+    border-top: 3px solid #2271b1;
+    border-bottom-color: #f0f0f1;
+    background: #f0f0f1;
+    color: #000;
+}
+
+.fbps-tab:focus {
+    outline: 2px solid #0073aa;
+    outline-offset: 2px;
+}
+
+.fbps-tabpanel:focus {
+    outline: 2px solid #0073aa;
+    outline-offset: 2px;
+}
+
+.fbps-tabpanel > h2 {
+    margin-top: 0;
+}
+
 .fbps-search-field {
     display: flex;
     align-items: flex-start;
@@ -84,9 +136,7 @@
 #fbps-cancel-button:focus,
 #fbps-export-button:focus,
 #fbps-pattern-search-button:focus,
-#fbps-pattern-cancel-button:focus,
-#fbps-shortcode-search-button:focus,
-#fbps-shortcode-cancel-button:focus {
+#fbps-shortcode-search-button:focus {
     outline: 2px solid #0073aa;
     outline-offset: 2px;
 }
@@ -114,8 +164,20 @@
     margin-bottom: 0.5em;
 }
 
-.fbps-progress-container {
+/*
+ * The three progress regions and the shared Cancel button share one row, so
+ * Cancel sits next to the "Searching..." message it stops.
+ */
+.fbps-search-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
     margin-top: 20px;
+}
+
+.fbps-progress-container {
+    margin-top: 0;
 }
 
 .fbps-progress-spinner {
@@ -236,14 +298,6 @@
 .fbps-partial-notice {
     font-weight: 600;
     margin: 0.5em 0;
-}
-
-/*
- * After a search finishes the progress region holds only screen-reader text,
- * so it must not leave a gap above the results.
- */
-.fbps-progress-container.fbps-progress-done {
-    margin-top: 0;
 }
 
 .fbps-results-container .fbps-truncated {

@@ -56,6 +56,7 @@ Each journey takes one to two minutes. Spoken-phrase logs are written to
 |---|---|
 | `block-search.sr.spec.js` | The primary flow. Every form control announces a name; the two hints on this form (HTML Anchor and Post Types) are announced with their control (F8); the completion phrase is short and says how many results were found (F7). |
 | `results-table.sr.spec.js` | Column toggles keep focus on the checkbox (F5); sortable headers are buttons in `th[scope][aria-sort]` and announce their direction (F6). |
+| `search-tabs.sr.spec.js` | The search-type tabs (issue #18). Tab reaches the selected tab; Left and Right move between tabs and show only that tab's form; each tab announces its name and that it is selected; switching tabs keeps the results on screen. |
 | `landmarks-and-empty-state.sr.spec.js` | Empty results containers are not landmarks, and role and `aria-label` are applied together only when a container fills (F15). |
 
 The screen-reader assertions are deliberately strict. A failure is a finding,
