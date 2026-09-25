@@ -21,6 +21,10 @@
         // Set when has_more is false; read by the table builder so the notice
         // survives re-renders (column toggles, sorts).
         var searchMeta = { block: null, pattern: null, shortcode: null };
+
+        // The surface whose search is running, or null. The page has one
+        // Cancel button for all three surfaces; it stops this search.
+        var activeSurface = null;
         var blockSearchComplete = false;
         var patternSearchComplete = false;
         var shortcodeSearchComplete = false;
@@ -57,7 +61,8 @@
          * panel is visible: it does not start a search, cancel one, or touch
          * the shared results area. Only the selected tab is in the Tab order
          * (roving tabindex); Left/Right wrap around, Home/End jump to the
-         * ends.
+         * ends. Keys held with Alt, Ctrl or Meta are left to the browser, so
+         * Alt+Left still goes back.
          */
         var $tabs = $('.fbps-tabs [role="tab"]');
 
@@ -79,6 +84,9 @@
         });
 
         $tabs.on('keydown', function(e) {
+            if (e.altKey || e.ctrlKey || e.metaKey) {
+                return;
+            }
             var index = $tabs.index(this);
             var next;
             switch (e.key) {
@@ -165,7 +173,8 @@
             // state immediately after this returns.
             $('#fbps-search-button, #fbps-pattern-search-button, #fbps-shortcode-search-button')
                 .prop('disabled', false).attr('aria-busy', 'false');
-            $('#fbps-cancel-button, #fbps-pattern-cancel-button, #fbps-shortcode-cancel-button').hide();
+            $('#fbps-cancel-button').hide();
+            activeSurface = null;
             $('#fbps-progress, #fbps-pattern-progress, #fbps-shortcode-progress').empty().hide();
             allResults = [];
             allPatternResults = [];
@@ -224,6 +233,32 @@
             var active = document.activeElement;
             if (!active || active === document.body || active === document.documentElement) {
                 $button.trigger('focus');
+            }
+        }
+
+        /**
+         * Hide the shared Cancel button when a search ends.
+         *
+         * Hiding the focused Cancel drops focus to <body>. The search that
+         * ended may belong to a tab that is no longer selected, and its own
+         * Search button is then hidden and cannot take focus, so focus goes to
+         * the Search button of the visible tab instead.
+         *
+         * Whether Cancel had focus is read before hiding it: browsers move
+         * focus off a hidden element only later, so restoreFocusIfLost() run
+         * straight after the hide still sees Cancel as focused and does
+         * nothing.
+         */
+        function hideCancelButton() {
+            var $cancel = $('#fbps-cancel-button');
+            var $visibleSearch = $('.fbps-tabpanel:not([hidden]) .fbps-search-actions .button-primary');
+            var cancelHadFocus = document.activeElement === $cancel[0];
+            activeSurface = null;
+            $cancel.hide();
+            if (cancelHadFocus) {
+                $visibleSearch.trigger('focus');
+            } else {
+                restoreFocusIfLost($visibleSearch);
             }
         }
 
@@ -440,7 +475,7 @@
                 } else {
                     $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-search-button'));
-                    $('#fbps-cancel-button').hide();
+                    hideCancelButton();
                     announceSearchComplete($('#fbps-progress'), accumulated.length, currentNoBlockResultsMsg(), 'block');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
@@ -584,7 +619,7 @@
             initTableSort('#fbps-search-results', 'block');
             $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-search-button'));
-            $('#fbps-cancel-button').hide();
+            hideCancelButton();
             $('#fbps-progress').hide();
             if (allResults.length) {
                 $('#fbps-export-button').show();
@@ -605,6 +640,7 @@
             var token = searchToken.block;   // clearAllResults() advanced it; this search owns the new value
             $('#fbps-export-button').hide();
             $('#fbps-search-button').prop('disabled', true).attr('aria-busy', 'true');
+            activeSurface = 'block';
             $('#fbps-cancel-button').show();
             $('#fbps-progress').removeClass('fbps-progress-done').show();
             updateProgress(0);
@@ -618,15 +654,28 @@
             searchBlock( $('#fbps-block-name').val() );
         });
 
-        // Cancel block search
+        // Cancel whichever search is running. One button serves all three
+        // surfaces, so it stays reachable when the tab that started the
+        // search is no longer selected.
+        var cancelTargets = {
+            block:     { search: '#fbps-search-button',           progress: '#fbps-progress',           results: '#fbps-search-results' },
+            pattern:   { search: '#fbps-pattern-search-button',   progress: '#fbps-pattern-progress',   results: '#fbps-pattern-search-results' },
+            shortcode: { search: '#fbps-shortcode-search-button', progress: '#fbps-shortcode-progress', results: '#fbps-shortcode-search-results' }
+        };
+
         $('#fbps-cancel-button').on('click', function(){
-            searchToken.block++;   // in-flight responses will see a stale token and drop
-            $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
-            restoreFocusIfLost($('#fbps-search-button'));
-            $('#fbps-cancel-button').hide();
-            $('#fbps-progress').hide();
+            var surface = activeSurface;
+            var target = cancelTargets[surface];
+            if (!target) {
+                hideCancelButton();
+                return;
+            }
+            searchToken[surface]++;   // in-flight responses will see a stale token and drop
+            $(target.search).prop('disabled', false).attr('aria-busy', 'false');
+            $(target.progress).hide();
+            hideCancelButton();
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
-            syncResultsRegion($('#fbps-search-results').html(html));
+            syncResultsRegion($(target.results).html(html));
         });
 
         // Unified CSV Export - detects which search type has results
@@ -772,7 +821,7 @@
                 } else {
                     $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-pattern-search-button'));
-                    $('#fbps-pattern-cancel-button').hide();
+                    hideCancelButton();
                     announceSearchComplete($('#fbps-pattern-progress'), accumulated.length, fbpsData.i18n.noPatternResults, 'pattern');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
@@ -823,7 +872,7 @@
             initTableSort('#fbps-pattern-search-results', 'pattern');
             $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-pattern-search-button'));
-            $('#fbps-pattern-cancel-button').hide();
+            hideCancelButton();
             $('#fbps-pattern-progress').hide();
             if (allPatternResults.length) {
                 $('#fbps-export-button').show();
@@ -840,7 +889,8 @@
             var token = searchToken.pattern;
             $('#fbps-export-button').hide();
             $('#fbps-pattern-search-button').prop('disabled', true).attr('aria-busy', 'true');
-            $('#fbps-pattern-cancel-button').show();
+            activeSurface = 'pattern';
+            $('#fbps-cancel-button').show();
             $('#fbps-pattern-progress').removeClass('fbps-progress-done').show();
             updatePatternProgress(0);
 
@@ -852,17 +902,6 @@
         // Pattern search button handler
         $('#fbps-pattern-search-button').on('click', function(){
             searchPattern( $('#fbps-pattern-dropdown').val() );
-        });
-
-        // Cancel pattern search
-        $('#fbps-pattern-cancel-button').on('click', function(){
-            searchToken.pattern++;
-            $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
-            restoreFocusIfLost($('#fbps-pattern-search-button'));
-            $('#fbps-pattern-cancel-button').hide();
-            $('#fbps-pattern-progress').hide();
-            var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
-            syncResultsRegion($('#fbps-pattern-search-results').html(html));
         });
 
         // ========== SHORTCODE SEARCH FUNCTIONS ==========
@@ -930,7 +969,7 @@
                 } else {
                     $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-shortcode-search-button'));
-                    $('#fbps-shortcode-cancel-button').hide();
+                    hideCancelButton();
                     announceSearchComplete($('#fbps-shortcode-progress'), accumulated.length, fbpsData.i18n.noShortcodeResults, 'shortcode');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
@@ -981,7 +1020,7 @@
             initTableSort('#fbps-shortcode-search-results', 'shortcode');
             $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-shortcode-search-button'));
-            $('#fbps-shortcode-cancel-button').hide();
+            hideCancelButton();
             $('#fbps-shortcode-progress').hide();
             if (allShortcodeResults.length) {
                 $('#fbps-export-button').show();
@@ -998,7 +1037,8 @@
             var token = searchToken.shortcode;
             $('#fbps-export-button').hide();
             $('#fbps-shortcode-search-button').prop('disabled', true).attr('aria-busy', 'true');
-            $('#fbps-shortcode-cancel-button').show();
+            activeSurface = 'shortcode';
+            $('#fbps-cancel-button').show();
             $('#fbps-shortcode-progress').removeClass('fbps-progress-done').show();
             updateShortcodeProgress(0);
 
@@ -1010,17 +1050,6 @@
         // Shortcode search button handler
         $('#fbps-shortcode-search-button').on('click', function(){
             searchShortcode( $('#fbps-shortcode-dropdown').val() );
-        });
-
-        // Cancel shortcode search
-        $('#fbps-shortcode-cancel-button').on('click', function(){
-            searchToken.shortcode++;
-            $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
-            restoreFocusIfLost($('#fbps-shortcode-search-button'));
-            $('#fbps-shortcode-cancel-button').hide();
-            $('#fbps-shortcode-progress').hide();
-            var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
-            syncResultsRegion($('#fbps-shortcode-search-results').html(html));
         });
 
         /** How initTableSort() reaches each surface's data and renderer. */

@@ -61,6 +61,11 @@
     outline-offset: 2px;
 }
 
+.fbps-tabpanel:focus {
+    outline: 2px solid #0073aa;
+    outline-offset: 2px;
+}
+
 .fbps-tabpanel > h2 {
     margin-top: 0;
 }
@@ -131,9 +136,7 @@
 #fbps-cancel-button:focus,
 #fbps-export-button:focus,
 #fbps-pattern-search-button:focus,
-#fbps-pattern-cancel-button:focus,
-#fbps-shortcode-search-button:focus,
-#fbps-shortcode-cancel-button:focus {
+#fbps-shortcode-search-button:focus {
     outline: 2px solid #0073aa;
     outline-offset: 2px;
 }
@@ -161,8 +164,20 @@
     margin-bottom: 0.5em;
 }
 
-.fbps-progress-container {
+/*
+ * The three progress regions and the shared Cancel button share one row, so
+ * Cancel sits next to the "Searching..." message it stops.
+ */
+.fbps-search-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
     margin-top: 20px;
+}
+
+.fbps-progress-container {
+    margin-top: 0;
 }
 
 .fbps-progress-spinner {
@@ -283,14 +298,6 @@
 .fbps-partial-notice {
     font-weight: 600;
     margin: 0.5em 0;
-}
-
-/*
- * After a search finishes the progress region holds only screen-reader text,
- * so it must not leave a gap above the results.
- */
-.fbps-progress-container.fbps-progress-done {
-    margin-top: 0;
 }
 
 .fbps-results-container .fbps-truncated {

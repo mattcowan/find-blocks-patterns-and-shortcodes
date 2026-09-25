@@ -53,7 +53,7 @@ const SURFACES = {
     results: '#fbps-pattern-search-results',
     progress: '#fbps-pattern-progress',
     searchButton: '#fbps-pattern-search-button',
-    cancelButton: '#fbps-pattern-cancel-button',
+    cancelButton: '#fbps-cancel-button', // one Cancel serves all three
   },
   shortcode: {
     tab: '#fbps-tab-shortcode',
@@ -62,7 +62,7 @@ const SURFACES = {
     results: '#fbps-shortcode-search-results',
     progress: '#fbps-shortcode-progress',
     searchButton: '#fbps-shortcode-search-button',
-    cancelButton: '#fbps-shortcode-cancel-button',
+    cancelButton: '#fbps-cancel-button', // one Cancel serves all three
   },
 };
 

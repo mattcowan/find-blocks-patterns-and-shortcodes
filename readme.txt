@@ -74,7 +74,7 @@ Yes! Click the "Export CSV" button after searching to download results as a spre
 
 = Does it work with WP-CLI? =
 
-Yes! Use `wp block-usage search core/paragraph` for command-line searches.
+Yes! Use `wp fbps search core/paragraph` for command-line searches.
 
 = How do I search for synced patterns? =
 
@@ -89,6 +89,8 @@ Select the Patterns tab to find where reusable blocks/patterns are used.
 
 = 1.1.4 =
 * The Tools page now shows one search form at a time. Select the Blocks, Patterns, or Shortcodes tab to show its form. The Blocks tab is selected when the page opens. To move between tabs with the keyboard, use the Left and Right arrow keys. Switching tabs does not start a search and does not clear the results.
+* One Cancel button now stops the search that is running, from any tab. It shows next to the search progress message.
+* The WP-CLI examples now use the correct command name, `wp fbps`. They said `wp block-usage`.
 * Tested up to WordPress 7.1.
 
 = 1.1.3 =
@@ -163,13 +165,13 @@ Select the Patterns tab to find where reusable blocks/patterns are used.
 == WP-CLI Commands ==
 
 Search for blocks:
-`wp block-usage search core/paragraph --post-type=post,page --format=table`
+`wp fbps search core/paragraph --post-type=post,page --format=table`
 
 Clear cache:
-`wp block-usage clear-cache`
+`wp fbps clear-cache`
 
 View security logs:
-`wp block-usage logs --limit=100 --format=csv`
+`wp fbps logs --limit=100 --format=csv`
 
 == Filters and Hooks ==
 

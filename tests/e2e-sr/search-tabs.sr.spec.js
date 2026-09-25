@@ -11,7 +11,9 @@
  *    that tab's form.
  *  - Switching tabs does not start a search and does not clear the results
  *    already on screen.
- *  - Tab from the tab list moves into the visible form.
+ *  - Tab from the tab list moves to the visible panel. The Patterns and
+ *    Shortcodes panels open with a heading, so the panel itself is the stop
+ *    (tabindex="0") and NVDA reads its name.
  *
  * NVDA may leave browse mode on when a tab takes focus, in which case its
  * arrow keys move the virtual cursor and never reach the page. The journey
@@ -116,7 +118,7 @@ test('search tabs: arrow keys switch forms, tabs announce state, results stay', 
     shortcodeRows: document.querySelectorAll('#fbps-shortcode-search-results tbody tr').length,
   }));
 
-  // --- Tab out of the tab list lands in the visible form ---
+  // --- Tab out of the tab list lands on the visible panel ---
   await h.press(page, nvda, 'Tab');
   await h.delay(450);
   const intoPanelPhrase = await nvda.lastSpokenPhrase();
@@ -161,8 +163,8 @@ test('search tabs: arrow keys switch forms, tabs announce state, results stay', 
     shortcodeRows: 0,
   });
 
-  // Tab leaves the tab list for the visible form's first control.
-  expect(focusInPanel && focusInPanel.id).toBe('fbps-shortcode-dropdown');
+  // Tab leaves the tab list for the visible panel itself, not past its heading.
+  expect(focusInPanel && focusInPanel.id).toBe('fbps-panel-shortcode');
 
   // --- Screen-reader assertions ---
   // Each tab says its name, that it is a tab, and that it is selected.
