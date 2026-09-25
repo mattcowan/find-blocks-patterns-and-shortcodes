@@ -248,8 +248,18 @@
          * focus off a hidden element only later, so restoreFocusIfLost() run
          * straight after the hide still sees Cancel as focused and does
          * nothing.
+         *
+         * @param {string} [surface] The surface whose search ended: 'block',
+         *     'pattern' or 'shortcode'. When a different surface owns the
+         *     running search, nothing happens. This keeps a validation error
+         *     on one tab (for example Search Pattern with no pattern chosen)
+         *     from hiding the Cancel of a search still running on another.
+         *     Omit it only to hide Cancel unconditionally.
          */
-        function hideCancelButton() {
+        function hideCancelButton(surface) {
+            if (surface && activeSurface && activeSurface !== surface) {
+                return;
+            }
             var $cancel = $('#fbps-cancel-button');
             var $visibleSearch = $('.fbps-tabpanel:not([hidden]) .fbps-search-actions .button-primary');
             var cancelHadFocus = document.activeElement === $cancel[0];
@@ -475,7 +485,7 @@
                 } else {
                     $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-search-button'));
-                    hideCancelButton();
+                    hideCancelButton('block');
                     announceSearchComplete($('#fbps-progress'), accumulated.length, currentNoBlockResultsMsg(), 'block');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
@@ -619,7 +629,7 @@
             initTableSort('#fbps-search-results', 'block');
             $('#fbps-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-search-button'));
-            hideCancelButton();
+            hideCancelButton('block');
             $('#fbps-progress').hide();
             if (allResults.length) {
                 $('#fbps-export-button').show();
@@ -673,7 +683,7 @@
             searchToken[surface]++;   // in-flight responses will see a stale token and drop
             $(target.search).prop('disabled', false).attr('aria-busy', 'false');
             $(target.progress).hide();
-            hideCancelButton();
+            hideCancelButton(surface);
             var html = '<div role="alert" class="notice notice-warning"><p>' + escapeHtml(fbpsData.i18n.searchCancelled) + '</p></div>';
             syncResultsRegion($(target.results).html(html));
         });
@@ -821,7 +831,7 @@
                 } else {
                     $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-pattern-search-button'));
-                    hideCancelButton();
+                    hideCancelButton('pattern');
                     announceSearchComplete($('#fbps-pattern-progress'), accumulated.length, fbpsData.i18n.noPatternResults, 'pattern');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
@@ -872,7 +882,7 @@
             initTableSort('#fbps-pattern-search-results', 'pattern');
             $('#fbps-pattern-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-pattern-search-button'));
-            hideCancelButton();
+            hideCancelButton('pattern');
             $('#fbps-pattern-progress').hide();
             if (allPatternResults.length) {
                 $('#fbps-export-button').show();
@@ -969,7 +979,7 @@
                 } else {
                     $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-shortcode-search-button'));
-                    hideCancelButton();
+                    hideCancelButton('shortcode');
                     announceSearchComplete($('#fbps-shortcode-progress'), accumulated.length, fbpsData.i18n.noShortcodeResults, 'shortcode');
                     if (accumulated.length > 0) {
                         $('#fbps-export-button').show();
@@ -1020,7 +1030,7 @@
             initTableSort('#fbps-shortcode-search-results', 'shortcode');
             $('#fbps-shortcode-search-button').prop('disabled', false).attr('aria-busy', 'false');
             restoreFocusIfLost($('#fbps-shortcode-search-button'));
-            hideCancelButton();
+            hideCancelButton('shortcode');
             $('#fbps-shortcode-progress').hide();
             if (allShortcodeResults.length) {
                 $('#fbps-export-button').show();
